@@ -7,6 +7,8 @@ import sys
 import requests
 import qrcode
 
+from cli_common import require_env, select_qr_text
+
 
 def shorten_with_bitly(url: str, token: str) -> str:
     res = requests.post(
@@ -47,9 +49,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    token = os.getenv("BITLY_ACCESS_TOKEN")
+    token = require_env("BITLY_ACCESS_TOKEN")
     if not token:
-        print("Error: BITLY_ACCESS_TOKEN is not set", file=sys.stderr)
         return 1
 
     try:
@@ -58,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: Failed to shorten URL with Bitly: {exc}", file=sys.stderr)
         return 1
 
-    qr_text = short_url if args.qr_target == "short" else args.url
+    qr_text = select_qr_text(args.qr_target, short_url, args.url)
     try:
         make_qr(qr_text, args.output)
     except OSError as exc:

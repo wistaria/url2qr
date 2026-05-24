@@ -36,9 +36,23 @@ def test_resolve_box_folder_id(monkeypatch):
     def fake_request(method, endpoint, token, params=None, json=None):
         calls.append((method, endpoint, params))
         if endpoint == "folders/0/items":
-            return FakeResponse({"entries": [{"id": "123", "name": "MyFolder", "type": "folder"}], "total_count": 1, "offset": 0, "limit": 1000})
+            return FakeResponse(
+                {
+                    "entries": [{"id": "123", "name": "MyFolder", "type": "folder"}],
+                    "total_count": 1,
+                    "offset": 0,
+                    "limit": 1000,
+                }
+            )
         if endpoint == "folders/123/items":
-            return FakeResponse({"entries": [{"id": "456", "name": "Sub", "type": "folder"}], "total_count": 1, "offset": 0, "limit": 1000})
+            return FakeResponse(
+                {
+                    "entries": [{"id": "456", "name": "Sub", "type": "folder"}],
+                    "total_count": 1,
+                    "offset": 0,
+                    "limit": 1000,
+                }
+            )
         raise AssertionError(f"unexpected endpoint: {endpoint}")
 
     monkeypatch.setattr(box2qr, "_box_api_request", fake_request)
@@ -52,7 +66,14 @@ def test_resolve_box_folder_id(monkeypatch):
 def test_get_or_create_shared_url_create_success(monkeypatch):
     def fake_request(method, endpoint, token, params=None, json=None):
         if method == "GET" and endpoint == "folders/0/items":
-            return FakeResponse({"entries": [{"id": "123", "name": "MyFolder", "type": "folder"}], "total_count": 1, "offset": 0, "limit": 1000})
+            return FakeResponse(
+                {
+                    "entries": [{"id": "123", "name": "MyFolder", "type": "folder"}],
+                    "total_count": 1,
+                    "offset": 0,
+                    "limit": 1000,
+                }
+            )
         if method == "PUT" and endpoint == "folders/123":
             return FakeResponse({"shared_link": {"url": "https://box.com/s/abc"}})
         raise AssertionError(f"unexpected call: {method} {endpoint}")
@@ -66,7 +87,14 @@ def test_get_or_create_shared_url_create_success(monkeypatch):
 def test_get_or_create_shared_url_falls_back_to_get(monkeypatch):
     def fake_request(method, endpoint, token, params=None, json=None):
         if method == "GET" and endpoint == "folders/0/items":
-            return FakeResponse({"entries": [{"id": "123", "name": "MyFolder", "type": "folder"}], "total_count": 1, "offset": 0, "limit": 1000})
+            return FakeResponse(
+                {
+                    "entries": [{"id": "123", "name": "MyFolder", "type": "folder"}],
+                    "total_count": 1,
+                    "offset": 0,
+                    "limit": 1000,
+                }
+            )
         if method == "PUT" and endpoint == "folders/123":
             return FakeResponse({"type": "error"}, status_code=200)
         if method == "GET" and endpoint == "folders/123":
@@ -82,11 +110,34 @@ def test_get_or_create_shared_url_falls_back_to_get(monkeypatch):
 def test_get_or_create_shared_url_includes_permission_hint(monkeypatch):
     def fake_request(method, endpoint, token, params=None, json=None):
         if method == "GET" and endpoint == "folders/0/items":
-            return FakeResponse({"entries": [{"id": "123", "name": "MyFolder", "type": "folder"}], "total_count": 1, "offset": 0, "limit": 1000})
+            return FakeResponse(
+                {
+                    "entries": [{"id": "123", "name": "MyFolder", "type": "folder"}],
+                    "total_count": 1,
+                    "offset": 0,
+                    "limit": 1000,
+                }
+            )
         if method == "PUT" and endpoint == "folders/123":
-            return FakeResponse({"error": {"code": "access_denied_insufficient_permissions", "message": "not permitted"}}, status_code=403)
+            return FakeResponse(
+                {
+                    "error": {
+                        "code": "access_denied_insufficient_permissions",
+                        "message": "not permitted",
+                    }
+                },
+                status_code=403,
+            )
         if method == "GET" and endpoint == "folders/123":
-            return FakeResponse({"error": {"code": "access_denied_insufficient_permissions", "message": "not permitted"}}, status_code=403)
+            return FakeResponse(
+                {
+                    "error": {
+                        "code": "access_denied_insufficient_permissions",
+                        "message": "not permitted",
+                    }
+                },
+                status_code=403,
+            )
         raise AssertionError(f"unexpected call: {method} {endpoint}")
 
     monkeypatch.setattr(box2qr, "_box_api_request", fake_request)
@@ -101,7 +152,9 @@ def test_get_or_create_shared_url_includes_permission_hint(monkeypatch):
 def test_main_success_public_qr(monkeypatch):
     monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
     monkeypatch.setenv("BOX_ACCESS_TOKEN", "box-token")
-    monkeypatch.setattr(box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc")
+    monkeypatch.setattr(
+        box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
+    )
     monkeypatch.setattr(box2qr, "shorten_with_bitly", lambda u, t: "https://bit.ly/abc")
 
     captured = {}

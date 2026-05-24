@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 
+from cli_common import require_env, select_qr_text
 from url2qr import make_qr, shorten_with_bitly
 
 
@@ -107,7 +108,9 @@ def _has_box_permission_error(*messages: str) -> bool:
         "access denied",
         "not permitted",
     )
-    return any(any(marker in message.lower() for marker in markers) for message in messages)
+    return any(
+        any(marker in message.lower() for marker in markers) for message in messages
+    )
 
 
 def _list_folder_items(folder_id: str, token: str) -> list[dict[str, Any]]:
@@ -214,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         description="Create a Box shared URL, then generate Bitly short URL and QR code."
     )
     parser.add_argument("path", help="Box path (API path or local Box Drive path)")
-    parser.add_argument("-o", "--output", default="qrcode.png", help="QR code output file")
+    parser.add_argument(
+        "-o", "--output", default="qrcode.png", help="QR code output file"
+    )
     parser.add_argument(
         "--qr-target",
         choices=["short", "public"],
@@ -224,14 +229,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    bitly_token = os.getenv("BITLY_ACCESS_TOKEN")
+    bitly_token = require_env("BITLY_ACCESS_TOKEN")
     if not bitly_token:
-        print("Error: BITLY_ACCESS_TOKEN is not set", file=sys.stderr)
         return 1
 
-    box_token = os.getenv("BOX_ACCESS_TOKEN")
+    box_token = require_env("BOX_ACCESS_TOKEN")
     if not box_token:
-        print("Error: BOX_ACCESS_TOKEN is not set", file=sys.stderr)
         return 1
 
     try:
@@ -252,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: Failed to shorten URL with Bitly: {exc}", file=sys.stderr)
         return 1
 
-    qr_text = short_url if args.qr_target == "short" else public_url
+    qr_text = select_qr_text(args.qr_target, short_url, public_url)
     try:
         make_qr(qr_text, args.output)
     except OSError as exc:

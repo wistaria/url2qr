@@ -8,6 +8,7 @@ import sys
 
 import requests
 
+from cli_common import require_env, select_qr_text
 from url2qr import make_qr, shorten_with_bitly
 
 
@@ -151,14 +152,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    bitly_token = os.getenv("BITLY_ACCESS_TOKEN")
+    bitly_token = require_env("BITLY_ACCESS_TOKEN")
     if not bitly_token:
-        print("Error: BITLY_ACCESS_TOKEN is not set", file=sys.stderr)
         return 1
 
-    dropbox_token = os.getenv("DROPBOX_ACCESS_TOKEN")
+    dropbox_token = require_env("DROPBOX_ACCESS_TOKEN")
     if not dropbox_token:
-        print("Error: DROPBOX_ACCESS_TOKEN is not set", file=sys.stderr)
         return 1
 
     try:
@@ -179,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: Failed to shorten URL with Bitly: {exc}", file=sys.stderr)
         return 1
 
-    qr_text = short_url if args.qr_target == "short" else public_url
+    qr_text = select_qr_text(args.qr_target, short_url, public_url)
     try:
         make_qr(qr_text, args.output)
     except OSError as exc:
