@@ -1,0 +1,4 @@
+requests>=2.31.0
+qrcode[pil]>=7.4.2
+pytest>=8.0.0
+ruff>=0.0.241
