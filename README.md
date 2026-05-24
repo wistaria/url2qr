@@ -8,6 +8,8 @@ A CLI tool that takes a URL, creates a Bitly short URL, and saves that URL as a 
 
 It also includes an additional script that takes a Dropbox path, gets a public shared URL, then creates a Bitly short URL and QR code.
 
+There is also a Box workflow for local Box Drive folders.
+
 ## Features
 
 - Generate a Bitly short URL from an input URL
@@ -16,12 +18,14 @@ It also includes an additional script that takes a Dropbox path, gets a public s
   - `original` (default): the original URL
   - `short`: the Bitly URL
 - Generate a Dropbox public URL from a Dropbox path, then create short URL + QR code
+- Generate a Box public URL from a Box Drive local folder, then create short URL + QR code
 
 ## Requirements
 
 - Python 3.10+
 - Bitly Access Token
 - Dropbox Access Token (for Dropbox path workflow)
+- Box Access Token (for Box path workflow)
 
 ## Setup
 
@@ -41,6 +45,12 @@ If you use the Dropbox path workflow, set your Dropbox token too.
 
 ```bash
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
+```
+
+If you use the Box workflow, set your Box token too.
+
+```bash
+export BOX_ACCESS_TOKEN="your_box_token"
 ```
 
 ## How To Get A Bitly Access Token
@@ -68,6 +78,18 @@ Note: Keep this token private. Treat it like a password.
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
 ```
 
+## How To Get A Box Access Token
+
+1. Sign in to the [Box Developer Console](https://app.box.com/developers/console).
+2. Create or open your Box app.
+3. Enable the permissions required to read folders and manage shared links.
+4. Generate a new access token for the app.
+5. Export it in your shell:
+
+```bash
+export BOX_ACCESS_TOKEN="your_box_token"
+```
+
 ## Usage
 
 Quick run examples:
@@ -85,6 +107,9 @@ python url2qr.py "https://example.com/article/123" -o article_qr.png
 
 # 4) Run Dropbox path workflow
 python dropbox2qr.py "/MyFolder/file.txt" -o file_qr.png
+
+# 5) Run Box folder workflow
+python box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt" -o box_qr.png
 ```
 
 Basic usage:
@@ -129,6 +154,24 @@ Embed the short URL in the QR code:
 python dropbox2qr.py "/MyFolder/file.txt" --qr-target short -o dropbox_qr.png
 ```
 
+Box folder workflow:
+
+```bash
+python box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt"
+```
+
+Or pass a Box API path directly:
+
+```bash
+python box2qr.py "/MyFolder/file.txt"
+```
+
+Embed the short URL in the QR code:
+
+```bash
+python box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
+```
+
 ## Test
 
 ```bash
@@ -149,3 +192,13 @@ If you see an error mentioning missing scopes such as `sharing.write` or `sharin
 3. Save app permissions.
 4. Generate a new access token (old tokens do not automatically gain new scopes).
 5. Export the new token and run the script again.
+
+### Box permission error troubleshooting
+
+If you see an error mentioning missing Box permissions, your Box app token does not have enough access.
+
+1. Open the Box Developer Console and select your app.
+2. Enable the permissions required for folders and shared links.
+3. Save the changes.
+4. Generate a new access token.
+5. Export the new token and run the Box workflow again.
