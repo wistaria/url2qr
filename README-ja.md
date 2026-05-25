@@ -92,24 +92,6 @@ export BOX_ACCESS_TOKEN="your_box_token"
 
 ## 使い方
 
-クイックスタート:
-
-```bash
-# 1) 必要な token を設定
-# 任意: Bitly URL 生成を有効にする
-# export BITLY_ACCESS_TOKEN="your_bitly_token"
-export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
-
-# 2) URL workflow を実行
-python3 url2qr.py "https://example.com/article/123" -o article_qr.png
-
-# 3) Dropbox workflow を実行
-python3 dropbox2qr.py "/MyFolder/file.txt" -o file_qr.png
-
-# 4) Box workflow を実行
-python3 box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt" -o box_qr.png
-```
-
 基本的な使い方:
 
 ```bash
@@ -168,14 +150,6 @@ python3 box2qr.py "/MyFolder/file.txt"
 
 ```bash
 python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
-```
-
-## テスト
-
-```bash
-/private/tmp/$UID/url2qr/bin/python -m pip install -r requirements-dev.txt
-/private/tmp/$UID/url2qr/bin/python -m pytest -q
-/private/tmp/$UID/url2qr/bin/python -m ruff check .
 ```
 
 ## メモ

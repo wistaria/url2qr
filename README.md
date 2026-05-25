@@ -92,24 +92,6 @@ export BOX_ACCESS_TOKEN="your_box_token"
 
 ## Usage
 
-Quick start:
-
-```bash
-# 1) Set the tokens you need
-# Optional: enables Bitly URL generation
-# export BITLY_ACCESS_TOKEN="your_bitly_token"
-export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
-
-# 2) Run the URL workflow
-python3 url2qr.py "https://example.com/article/123" -o article_qr.png
-
-# 3) Run the Dropbox workflow
-python3 dropbox2qr.py "/MyFolder/file.txt" -o file_qr.png
-
-# 4) Run the Box workflow
-python3 box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt" -o box_qr.png
-```
-
 Basic usage:
 
 ```bash
@@ -168,14 +150,6 @@ Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
 
 ```bash
 python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
-```
-
-## Testing
-
-```bash
-/private/tmp/$UID/url2qr/bin/python -m pip install -r requirements-dev.txt
-/private/tmp/$UID/url2qr/bin/python -m pytest -q
-/private/tmp/$UID/url2qr/bin/python -m ruff check .
 ```
 
 ## Notes
