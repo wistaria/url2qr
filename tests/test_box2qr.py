@@ -171,8 +171,31 @@ def test_main_success_public_qr(monkeypatch):
     assert captured["output"] == "box.png"
 
 
+def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, capsys):
+    monkeypatch.delenv("BITLY_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("BOX_ACCESS_TOKEN", "box-token")
+    monkeypatch.setattr(
+        box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
+    )
+
+    captured = {}
+    monkeypatch.setattr(
+        box2qr,
+        "make_qr",
+        lambda text, output: captured.update({"text": text, "output": output}),
+    )
+
+    exit_code = box2qr.main(["/MyFolder/file.txt", "--qr-target", "short"])
+    output = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured["text"] == "https://box.com/s/abc"
+    assert "Bitly URL:" not in output.out
+    assert "Warning:" in output.err
+    assert "BITLY_ACCESS_TOKEN is not set" in output.err
+
+
 def test_main_fails_without_box_token(monkeypatch, capsys):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
     monkeypatch.delenv("BOX_ACCESS_TOKEN", raising=False)
 
     exit_code = box2qr.main(["/MyFolder/file.txt"])

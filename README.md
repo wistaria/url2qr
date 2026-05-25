@@ -1,43 +1,41 @@
 # url2qr
 
+[English](README.md) | [日本語](README-ja.md)
+
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Author](https://img.shields.io/badge/author-Synge%20Todo-blue)](https://github.com/wistaria)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A CLI tool that takes a URL, creates a Bitly short URL, and saves it as a QR code image.
+A CLI tool that takes a URL and saves it as a QR code image, optionally creating a Bitly URL.
 
 It also includes additional scripts for Dropbox and Box workflows.
 
-The Dropbox script takes a local Dropbox path, gets a public shared URL, and then creates a Bitly short URL and QR code.
+The Dropbox script takes a local Dropbox path, gets a public shared URL, and then creates a QR code with an optional Bitly URL.
 
 The Box script does the same for local Box Drive folders.
 
 ## Features
 
-- Generate a Bitly short URL from an input URL
+- Generate a Bitly URL from an input URL when `BITLY_ACCESS_TOKEN` is set
 - Export QR codes as PNG images
 - Choose which URL to embed in the QR code
   - `original` (default): the original URL
-  - `short`: the Bitly URL
-- Generate a public Dropbox URL from a local Dropbox path, then create a short URL and QR code
-- Generate a public Box URL from a local Box Drive folder, then create a short URL and QR code
+  - `short`: the Bitly URL, or the original/public URL when Bitly is not configured
+- Generate a public Dropbox URL from a local Dropbox path, then create a QR code
+- Generate a public Box URL from a local Box Drive folder, then create a QR code
 
 ## Requirements
 
 - Python 3.10+
-- Bitly Access Token
+- Bitly Access Token (optional; enables Bitly URLs)
 - Dropbox Access Token (for Dropbox path workflow)
 - Box Access Token (for Box path workflow)
 
 ## Setup
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+The scripts create a virtual environment in the system temp directory and install runtime dependencies from `requirements.txt` automatically on first run. On macOS, the path is `/private/tmp/$UID/url2qr`.
 
-Set your Bitly token as an environment variable:
+Set your Bitly token as an environment variable if you want Bitly URLs:
 
 ```bash
 export BITLY_ACCESS_TOKEN="your_bitly_token"
@@ -97,93 +95,95 @@ export BOX_ACCESS_TOKEN="your_box_token"
 Quick start:
 
 ```bash
-# 1) Activate virtual environment
-source .venv/bin/activate
-
-# 2) Set the required tokens
-export BITLY_ACCESS_TOKEN="your_bitly_token"
+# 1) Set the tokens you need
+# Optional: enables Bitly URL generation
+# export BITLY_ACCESS_TOKEN="your_bitly_token"
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
 
-# 3) Run the URL workflow
-python url2qr.py "https://example.com/article/123" -o article_qr.png
+# 2) Run the URL workflow
+python3 url2qr.py "https://example.com/article/123" -o article_qr.png
 
-# 4) Run the Dropbox workflow
-python dropbox2qr.py "/MyFolder/file.txt" -o file_qr.png
+# 3) Run the Dropbox workflow
+python3 dropbox2qr.py "/MyFolder/file.txt" -o file_qr.png
 
-# 5) Run the Box workflow
-python box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt" -o box_qr.png
+# 4) Run the Box workflow
+python3 box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt" -o box_qr.png
 ```
 
 Basic usage:
 
 ```bash
-python url2qr.py "https://example.com/some/very/long/url"
+python3 url2qr.py "https://example.com/some/very/long/url"
 ```
 
 Specify an output file:
 
 ```bash
-python url2qr.py "https://example.com" -o myqr.png
+python3 url2qr.py "https://example.com" -o myqr.png
 ```
 
-Embed the short URL in the QR code:
+Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
 
 ```bash
-python url2qr.py "https://example.com" --qr-target short
+python3 url2qr.py "https://example.com" --qr-target short
 ```
 
 The command prints:
 
 - Original URL
-- Generated short URL
+- Generated Bitly URL, when Bitly is configured
 - Output QR code file path
 
 Dropbox workflow:
 
 ```bash
-python dropbox2qr.py "/Users/you/Library/CloudStorage/Dropbox/MyFolder/file.txt"
+python3 dropbox2qr.py "/Users/you/Library/CloudStorage/Dropbox/MyFolder/file.txt"
 ```
 
 Or pass a Dropbox API path directly:
 
 ```bash
-python dropbox2qr.py "/MyFolder/file.txt"
+python3 dropbox2qr.py "/MyFolder/file.txt"
 ```
 
-Embed the short URL in the QR code:
+Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
 
 ```bash
-python dropbox2qr.py "/MyFolder/file.txt" --qr-target short -o dropbox_qr.png
+python3 dropbox2qr.py "/MyFolder/file.txt" --qr-target short -o dropbox_qr.png
 ```
 
 Box workflow:
 
 ```bash
-python box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt"
+python3 box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt"
 ```
 
 Or pass a Box API path directly:
 
 ```bash
-python box2qr.py "/MyFolder/file.txt"
+python3 box2qr.py "/MyFolder/file.txt"
 ```
 
-Embed the short URL in the QR code:
+Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
 
 ```bash
-python box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
+python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
 ```
 
 ## Testing
 
 ```bash
-pytest -q
+/private/tmp/$UID/url2qr/bin/python -m pip install -r requirements-dev.txt
+/private/tmp/$UID/url2qr/bin/python -m pytest -q
+/private/tmp/$UID/url2qr/bin/python -m ruff check .
 ```
 
 ## Notes
 
-- Network access is required to call the Bitly API.
-- The command exits with an error if `BITLY_ACCESS_TOKEN` is not set.
+- Network access is required to call the Bitly API when `BITLY_ACCESS_TOKEN` is set.
+- Network access is also required on first run to install Python dependencies.
+- If `BITLY_ACCESS_TOKEN` is not set, the command prints a warning, skips Bitly URL generation, and still creates the QR code.
+- Set `URL2QR_NO_AUTO_VENV=1` to skip automatic virtual environment setup.
 
 ### Dropbox scope error troubleshooting
 

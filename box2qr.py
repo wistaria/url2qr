@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+if __name__ == "__main__":
+    from cli_common import ensure_project_venv
+
+    ensure_project_venv()
+
 import argparse
-import os
 import re
 import sys
 from typing import Any
 
 import requests
 
-from cli_common import require_env, select_qr_text
+from cli_common import (
+    optional_env,
+    parse_args_or_show_help,
+    require_env,
+    select_qr_text,
+)
 from url2qr import make_qr, shorten_with_bitly
 
 
@@ -214,7 +223,9 @@ def get_or_create_shared_url(box_path: str, token: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Create a Box shared URL, then generate Bitly short URL and QR code."
+        description=(
+            "Create a Box shared URL, then generate a QR code and optional Bitly URL."
+        )
     )
     parser.add_argument("path", help="Box path (API path or local Box Drive path)")
     parser.add_argument(
@@ -224,14 +235,12 @@ def main(argv: list[str] | None = None) -> int:
         "--qr-target",
         choices=["short", "public"],
         default="public",
-        help="Which URL to encode in the QR code",
+        help="Which URL to encode in the QR code; short means Bitly when available",
     )
 
-    args = parser.parse_args(argv)
-
-    bitly_token = require_env("BITLY_ACCESS_TOKEN")
-    if not bitly_token:
-        return 1
+    args = parse_args_or_show_help(parser, argv)
+    if args is None:
+        return 2
 
     box_token = require_env("BOX_ACCESS_TOKEN")
     if not box_token:
@@ -249,13 +258,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: Failed to get Box shared URL: {exc}", file=sys.stderr)
         return 1
 
-    try:
-        short_url = shorten_with_bitly(public_url, bitly_token)
-    except (requests.RequestException, KeyError, ValueError) as exc:
-        print(f"Error: Failed to shorten URL with Bitly: {exc}", file=sys.stderr)
-        return 1
+    bitly_url = None
+    bitly_token = optional_env(
+        "BITLY_ACCESS_TOKEN",
+        "BITLY_ACCESS_TOKEN is not set; skipping Bitly URL generation.",
+    )
+    if bitly_token:
+        try:
+            bitly_url = shorten_with_bitly(public_url, bitly_token)
+        except (requests.RequestException, KeyError, ValueError) as exc:
+            print(f"Error: Failed to shorten URL with Bitly: {exc}", file=sys.stderr)
+            return 1
 
-    qr_text = select_qr_text(args.qr_target, short_url, public_url)
+    qr_text = select_qr_text(args.qr_target, bitly_url, public_url)
     try:
         make_qr(qr_text, args.output)
     except OSError as exc:
@@ -264,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Box path:     {box_path}")
     print(f"Public URL:   {public_url}")
-    print(f"Short URL:    {short_url}")
+    if bitly_url:
+        print(f"Bitly URL:    {bitly_url}")
     print(f"QR code:      {args.output}")
     return 0
 
