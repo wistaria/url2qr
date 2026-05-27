@@ -128,7 +128,9 @@ def _get_code_no_browser(auth_url: str, expected_state: str) -> str:
     print(f"  {auth_url}")
     print()
     print("After authorizing, your browser will redirect to localhost and show")
-    print("a connection error. Copy the full URL from the address bar and paste it here.")
+    print(
+        "a connection error. Copy the full URL from the address bar and paste it here."
+    )
     print()
     callback_url = input("Callback URL: ").strip()
     parsed = urlparse(callback_url)
@@ -140,7 +142,9 @@ def _get_code_no_browser(auth_url: str, expected_state: str) -> str:
     return qs["code"][0]
 
 
-def _get_code_via_browser(auth_url: str, expected_state: str, redirect_port: int) -> str:
+def _get_code_via_browser(
+    auth_url: str, expected_state: str, redirect_port: int
+) -> str:
     result: dict[str, str] = {}
 
     class _Handler(BaseHTTPRequestHandler):

@@ -30,39 +30,57 @@ The Box script does the same for local Box Drive folders.
 - Bitly credentials (optional; enables Bitly URLs):
   - Static access token — `BITLY_ACCESS_TOKEN`, or
   - OAuth 2.0 credentials — `BITLY_CLIENT_ID` and `BITLY_CLIENT_SECRET`
-- Dropbox Access Token (for Dropbox path workflow)
-- Box OAuth 2.0 credentials — Client ID and Client Secret (for Box path workflow)
+- Dropbox credentials (for Dropbox path workflow):
+  - Static access token — `DROPBOX_ACCESS_TOKEN`, or
+  - OAuth 2.0 credentials — `DROPBOX_CLIENT_ID` and `DROPBOX_CLIENT_SECRET`
+- Box OAuth 2.0 credentials — `BOX_CLIENT_ID` and `BOX_CLIENT_SECRET` (for Box path workflow)
 
 ## Setup
 
 The scripts create a virtual environment in the system temp directory and install runtime dependencies from `requirements.txt` automatically on first run. On macOS, the path is `/private/tmp/$UID/url2qr`.
 
-For Bitly URL shortening, choose one of the two options below.
+### Bitly (optional)
 
-### Option A — Static access token (simple)
+For Bitly URL shortening, choose one of:
+
+#### Bitly — static access token (simple)
 
 ```bash
 export BITLY_ACCESS_TOKEN="your_bitly_token"
 ```
 
-### Option B — OAuth 2.0 (no manual token generation needed)
+#### Bitly — OAuth 2.0 (no manual token generation needed)
 
 ```bash
 export BITLY_CLIENT_ID="your_bitly_client_id"
 export BITLY_CLIENT_SECRET="your_bitly_client_secret"
 ```
 
-On first run a browser window opens for Bitly login. The access token is cached in
-`~/.config/url2qr/bitly_tokens.json` and reused automatically on subsequent runs.
-Bitly access tokens do not expire, so no refresh is needed.
+On first run a browser window opens for Bitly login. The token is cached in
+`~/.config/url2qr/bitly_tokens.json` and reused automatically. Bitly tokens do not expire.
 
-If you use the Dropbox workflow, set your Dropbox token too:
+### Dropbox
+
+For the Dropbox workflow, choose one of:
+
+#### Dropbox — static access token (simple)
 
 ```bash
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
 ```
 
-If you use the Box workflow, set your Box OAuth 2.0 credentials:
+#### Dropbox — OAuth 2.0 (no manual token generation needed)
+
+```bash
+export DROPBOX_CLIENT_ID="your_dropbox_app_key"
+export DROPBOX_CLIENT_SECRET="your_dropbox_app_secret"
+```
+
+On first run a browser window opens for Dropbox login. Tokens are cached in
+`~/.config/url2qr/dropbox_tokens.json` and refreshed automatically (access tokens
+expire after 4 hours; the refresh token handles renewal silently).
+
+### Box
 
 ```bash
 export BOX_CLIENT_ID="your_box_client_id"
@@ -103,35 +121,36 @@ On the first run a browser window opens for Bitly login. After you authorize the
 the token is saved to `~/.config/url2qr/bitly_tokens.json` (mode 600) and reused
 automatically. Bitly tokens do not expire, so no refresh is needed.
 
-### Headless or browser-less environments
-
-Pass `--no-browser` to skip the local HTTP server. The script prints the authorization
-URL and prompts you to paste the callback URL from your browser (which can be on a
-different machine):
-
-```bash
-python3 url2qr.py "https://example.com" --no-browser
-# or
-python3 dropbox2qr.py "/MyFolder/file.txt" --no-browser
-# or
-python3 box2qr.py "/MyFolder/file.txt" --no-browser
-```
-
-After you open the printed URL in any browser and authorize, your browser will be
-redirected to `http://localhost:8080/callback?code=...`. Copy that full URL from the
-address bar and paste it at the prompt.
-
-## How To Get A Dropbox Access Token
+## How To Get A Dropbox Static Access Token
 
 1. Sign in to [Dropbox App Console](https://www.dropbox.com/developers/apps).
 2. Create a new app (Scoped access recommended).
-3. Grant permissions for sharing links (for example, `sharing.write` and `sharing.read`).
+3. Grant permissions for sharing links: `sharing.write` and `sharing.read`.
 4. Generate an access token in the app settings page.
 5. Set it in your shell:
 
 ```bash
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
 ```
+
+## How To Set Up Dropbox OAuth 2.0
+
+1. Sign in to [Dropbox App Console](https://www.dropbox.com/developers/apps).
+2. Create a new app — choose **Scoped access** → **Full Dropbox** (or **App folder**).
+3. Under **Permissions**, enable `sharing.write` and `sharing.read`.
+4. Under **Settings → OAuth 2 → Redirect URIs**, add `http://localhost:8080/callback`
+   (use a different port if you pass `--redirect-port`).
+5. Copy the **App key** (Client ID) and **App secret** (Client Secret) from the Settings tab.
+6. Set them in your shell:
+
+```bash
+export DROPBOX_CLIENT_ID="your_dropbox_app_key"
+export DROPBOX_CLIENT_SECRET="your_dropbox_app_secret"
+```
+
+On the first run a browser window opens for Dropbox login. After you authorize the app,
+tokens are saved to `~/.config/url2qr/dropbox_tokens.json` (mode 600). The access token
+expires after 4 hours and is refreshed automatically using the stored refresh token.
 
 ## How To Set Up Box OAuth 2.0
 
@@ -155,6 +174,27 @@ On the first run a browser window opens for Box login. After you authorize the a
 tokens are saved to `~/.config/url2qr/box_tokens.json` (mode 600) and reused
 automatically. The access token is refreshed silently using the stored refresh token.
 
+### Headless or browser-less environments
+
+Pass `--no-browser` to skip the local HTTP server. The script prints the authorization
+URL and prompts you to paste the callback URL from your browser (which can be on a
+different machine):
+
+```bash
+python3 url2qr.py "https://example.com" --no-browser
+# or
+python3 dropbox2qr.py "/MyFolder/file.txt" --no-browser
+# or
+python3 box2qr.py "/MyFolder/file.txt" --no-browser
+```
+
+After you open the printed URL in any browser and authorize, your browser will be
+redirected to `http://localhost:8080/callback?code=...`. Copy that full URL from the
+address bar and paste it at the prompt.
+
+Note: For `box2qr.py`, `--no-browser` applies only to the Bitly OAuth step. Box OAuth
+always uses the local HTTP server; use SSH port forwarding for headless Box authentication.
+
 ## Usage
 
 Basic usage:
@@ -173,6 +213,12 @@ Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
 python3 url2qr.py "https://example.com" --qr-target short
+```
+
+Skip Bitly even if credentials are configured:
+
+```bash
+python3 url2qr.py "https://example.com" --no-bitly
 ```
 
 The command prints:
@@ -222,17 +268,24 @@ python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
 - Network access is required to call the Bitly API when Bitly is configured.
 - Network access is also required on first run to install Python dependencies.
 - If Bitly is not configured, the command prints a warning, skips Bitly URL generation, and still creates the QR code.
+- `--no-bitly` skips Bitly even if credentials are configured.
 - Set `URL2QR_NO_AUTO_VENV=1` to skip automatic virtual environment setup.
 
 ### Dropbox scope error troubleshooting
 
-If you see an error mentioning missing scopes such as `sharing.write` or `sharing.read`, your Dropbox app token does not have enough permissions.
+If you see an error mentioning missing scopes such as `sharing.write` or `sharing.read`, your Dropbox app does not have enough permissions.
 
 1. Open Dropbox App Console and select your app.
-2. Add required scopes: `sharing.write` and `sharing.read`.
+2. Under **Permissions**, add `sharing.write` and `sharing.read`.
 3. Save app permissions.
-4. Generate a new access token (old tokens do not automatically gain new scopes).
-5. Export the new token and run the script again.
+4. If using a static token: generate a new access token (old tokens do not automatically gain new scopes).
+5. If using OAuth 2.0: delete the cached tokens so the next run re-authorizes with the new scopes:
+
+   ```bash
+   rm ~/.config/url2qr/dropbox_tokens.json
+   ```
+
+6. Run the Dropbox workflow again.
 
 ### Box permission error troubleshooting
 
@@ -249,12 +302,14 @@ If you see a permission or scope error when running the Box workflow:
 
 5. Run the Box workflow again — the browser will open for re-authorization.
 
-### Bitly token cache troubleshooting
+### Token cache troubleshooting
 
-If you need to re-authorize Bitly (for example, after revoking the app), delete the cached token:
+To force re-authorization for any service, delete the corresponding cache file:
 
 ```bash
-rm ~/.config/url2qr/bitly_tokens.json
+rm ~/.config/url2qr/bitly_tokens.json    # Bitly OAuth
+rm ~/.config/url2qr/dropbox_tokens.json  # Dropbox OAuth
+rm ~/.config/url2qr/box_tokens.json      # Box OAuth
 ```
 
 The next run will open a browser (or prompt for a callback URL with `--no-browser`) to re-authorize.
