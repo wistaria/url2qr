@@ -7,9 +7,18 @@ if __name__ == "__main__":
     ensure_project_venv()
 
 import argparse
+import base64
+import hashlib
+import json
 import re
+import secrets
 import sys
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -20,6 +29,167 @@ from cli_common import (
     select_qr_text,
 )
 from url2qr import make_qr, shorten_with_bitly
+
+# ---------------------------------------------------------------------------
+# OAuth 2.0 + PKCE
+# ---------------------------------------------------------------------------
+
+_TOKEN_CACHE = Path.home() / ".config" / "url2qr" / "box_tokens.json"
+_AUTH_URL = "https://account.box.com/api/oauth2/authorize"
+_TOKEN_URL = "https://api.box.com/oauth2/token"
+_DEFAULT_REDIRECT_PORT = 8080
+_AUTH_TIMEOUT = 120
+
+
+def get_box_access_token(
+    client_id: str,
+    client_secret: str,
+    redirect_port: int = _DEFAULT_REDIRECT_PORT,
+) -> str:
+    cached = _load_tokens()
+    if cached:
+        expires_at = cached.get("expires_at", 0)
+        if isinstance(expires_at, (int, float)) and expires_at > time.time():
+            return str(cached["access_token"])
+        refresh_token = cached.get("refresh_token")
+        if refresh_token:
+            try:
+                tokens = _refresh_tokens(client_id, client_secret, str(refresh_token))
+                return str(tokens["access_token"])
+            except requests.RequestException:
+                pass
+
+    tokens = _authorize(client_id, client_secret, redirect_port)
+    return str(tokens["access_token"])
+
+
+def _load_tokens() -> dict | None:
+    if not _TOKEN_CACHE.exists():
+        return None
+    try:
+        data = json.loads(_TOKEN_CACHE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_tokens(tokens: dict) -> None:
+    _TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    _TOKEN_CACHE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
+    _TOKEN_CACHE.chmod(0o600)
+
+
+def _store_with_expiry(tokens: dict) -> dict:
+    tokens["expires_at"] = time.time() + tokens.get("expires_in", 3600) - 60
+    _save_tokens(tokens)
+    return tokens
+
+
+def _refresh_tokens(client_id: str, client_secret: str, refresh_token: str) -> dict:
+    res = requests.post(
+        _TOKEN_URL,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        },
+        timeout=15,
+    )
+    res.raise_for_status()
+    return _store_with_expiry(res.json())
+
+
+def _pkce_pair() -> tuple[str, str]:
+    verifier = secrets.token_urlsafe(64)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+    return verifier, challenge
+
+
+def _authorize(client_id: str, client_secret: str, redirect_port: int) -> dict:
+    verifier, challenge = _pkce_pair()
+    redirect_uri = f"http://localhost:{redirect_port}/callback"
+    state = secrets.token_urlsafe(16)
+
+    auth_url = (
+        _AUTH_URL
+        + "?"
+        + urlencode(
+            {
+                "client_id": client_id,
+                "response_type": "code",
+                "redirect_uri": redirect_uri,
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+    )
+
+    result: dict[str, str] = {}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path == "/callback":
+                qs = parse_qs(parsed.query)
+                if "code" in qs:
+                    result["code"] = qs["code"][0]
+                    result["state"] = qs.get("state", [""])[0]
+                body = b"<html><body><h2>Authorized. You can close this window.</h2></body></html>"
+            else:
+                body = b"<html><body><h2>Not found.</h2></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            pass
+
+    server = HTTPServer(("localhost", redirect_port), _Handler)
+    server.timeout = 1
+
+    print("Opening browser for Box authorization...")
+    print(f"If the browser does not open, visit:\n  {auth_url}")
+    webbrowser.open(auth_url)
+
+    deadline = time.time() + _AUTH_TIMEOUT
+    while "code" not in result and time.time() < deadline:
+        server.handle_request()
+    server.server_close()
+
+    if "code" not in result:
+        raise TimeoutError(
+            f"Box authorization timed out after {_AUTH_TIMEOUT}s. "
+            "Please re-run the command to try again."
+        )
+    if result.get("state") != state:
+        raise ValueError("OAuth state mismatch — possible CSRF. Authorization aborted.")
+
+    res = requests.post(
+        _TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": result["code"],
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "code_verifier": verifier,
+        },
+        timeout=15,
+    )
+    res.raise_for_status()
+    return _store_with_expiry(res.json())
+
+
+# ---------------------------------------------------------------------------
+# Box API
+# ---------------------------------------------------------------------------
 
 
 def normalize_box_path(path: str) -> str:
@@ -221,6 +391,11 @@ def get_or_create_shared_url(box_path: str, token: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -237,13 +412,26 @@ def main(argv: list[str] | None = None) -> int:
         default="public",
         help="Which URL to encode in the QR code; short means Bitly when available",
     )
+    parser.add_argument(
+        "--redirect-port",
+        type=int,
+        default=_DEFAULT_REDIRECT_PORT,
+        help=f"Local port for OAuth callback (default: {_DEFAULT_REDIRECT_PORT})",
+    )
 
     args = parse_args_or_show_help(parser, argv)
     if args is None:
         return 2
 
-    box_token = require_env("BOX_ACCESS_TOKEN")
-    if not box_token:
+    client_id = require_env("BOX_CLIENT_ID")
+    client_secret = require_env("BOX_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        return 1
+
+    try:
+        box_token = get_box_access_token(client_id, client_secret, args.redirect_port)
+    except (TimeoutError, ValueError, requests.RequestException) as exc:
+        print(f"Error: Box authentication failed: {exc}", file=sys.stderr)
         return 1
 
     try:

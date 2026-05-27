@@ -151,7 +151,11 @@ def test_get_or_create_shared_url_includes_permission_hint(monkeypatch):
 
 def test_main_success_public_qr(monkeypatch):
     monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
-    monkeypatch.setenv("BOX_ACCESS_TOKEN", "box-token")
+    monkeypatch.setenv("BOX_CLIENT_ID", "client-id")
+    monkeypatch.setenv("BOX_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(
+        box2qr, "get_box_access_token", lambda cid, cs, port: "box-token"
+    )
     monkeypatch.setattr(
         box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
     )
@@ -173,7 +177,11 @@ def test_main_success_public_qr(monkeypatch):
 
 def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, capsys):
     monkeypatch.delenv("BITLY_ACCESS_TOKEN", raising=False)
-    monkeypatch.setenv("BOX_ACCESS_TOKEN", "box-token")
+    monkeypatch.setenv("BOX_CLIENT_ID", "client-id")
+    monkeypatch.setenv("BOX_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(
+        box2qr, "get_box_access_token", lambda cid, cs, port: "box-token"
+    )
     monkeypatch.setattr(
         box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
     )
@@ -195,11 +203,12 @@ def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, cap
     assert "BITLY_ACCESS_TOKEN is not set" in output.err
 
 
-def test_main_fails_without_box_token(monkeypatch, capsys):
-    monkeypatch.delenv("BOX_ACCESS_TOKEN", raising=False)
+def test_main_fails_without_box_credentials(monkeypatch, capsys):
+    monkeypatch.delenv("BOX_CLIENT_ID", raising=False)
+    monkeypatch.delenv("BOX_CLIENT_SECRET", raising=False)
 
     exit_code = box2qr.main(["/MyFolder/file.txt"])
     stderr = capsys.readouterr().err
 
     assert exit_code == 1
-    assert "BOX_ACCESS_TOKEN is not set" in stderr
+    assert "BOX_CLIENT_ID is not set" in stderr

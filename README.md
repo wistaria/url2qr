@@ -29,7 +29,7 @@ The Box script does the same for local Box Drive folders.
 - Python 3.10+
 - Bitly Access Token (optional; enables Bitly URLs)
 - Dropbox Access Token (for Dropbox path workflow)
-- Box Access Token (for Box path workflow)
+- Box OAuth 2.0 credentials — Client ID and Client Secret (for Box path workflow)
 
 ## Setup
 
@@ -47,11 +47,15 @@ If you use the Dropbox workflow, set your Dropbox token too:
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
 ```
 
-If you use the Box workflow, set your Box token too:
+If you use the Box workflow, set your Box OAuth 2.0 credentials:
 
 ```bash
-export BOX_ACCESS_TOKEN="your_box_token"
+export BOX_CLIENT_ID="your_box_client_id"
+export BOX_CLIENT_SECRET="your_box_client_secret"
 ```
+
+On first run the script opens a browser for Box login. Tokens are cached in
+`~/.config/url2qr/box_tokens.json` and refreshed automatically afterwards.
 
 ## How To Get A Bitly Access Token
 
@@ -78,17 +82,27 @@ Note: Keep this token private. Treat it like a password.
 export DROPBOX_ACCESS_TOKEN="your_dropbox_token"
 ```
 
-## How To Get A Box Access Token
+## How To Set Up Box OAuth 2.0
 
 1. Sign in to the [Box Developer Console](https://app.box.com/developers/console).
-2. Create or open your Box app.
-3. Enable the permissions required to read folders and manage shared links.
-4. Generate a new access token for the app.
-5. Export it in your shell:
+2. Create a new app — choose **Custom App** → **User Authentication (OAuth 2.0)**.
+3. Under **Configuration → OAuth 2.0 Redirect URI**, add `http://localhost:8080/callback`
+   (use a different port if you pass `--redirect-port`).
+4. Under **Configuration → Application Scopes**, enable at minimum:
+   - *Read all files and folders stored in Box*
+   - *Write all files and folders stored in Box*
+   - *Manage shared links*
+5. Copy the **Client ID** and **Client Secret** from the Configuration tab.
+6. Set them in your shell:
 
 ```bash
-export BOX_ACCESS_TOKEN="your_box_token"
+export BOX_CLIENT_ID="your_box_client_id"
+export BOX_CLIENT_SECRET="your_box_client_secret"
 ```
+
+On the first run a browser window opens for Box login. After you authorize the app,
+tokens are saved to `~/.config/url2qr/box_tokens.json` (mode 600) and reused
+automatically. The access token is refreshed silently using the stored refresh token.
 
 ## Usage
 
@@ -171,10 +185,15 @@ If you see an error mentioning missing scopes such as `sharing.write` or `sharin
 
 ### Box permission error troubleshooting
 
-If you see an error mentioning missing Box permissions, your Box app token does not have enough access.
+If you see a permission or scope error when running the Box workflow:
 
-1. Open the Box Developer Console and select your app.
-2. Enable the permissions required for folders and shared links.
+1. Open the [Box Developer Console](https://app.box.com/developers/console) and select your app.
+2. Under **Configuration → Application Scopes**, enable *Read/Write files and folders* and *Manage shared links*.
 3. Save the changes.
-4. Generate a new access token.
-5. Export the new token and run the Box workflow again.
+4. Delete the cached tokens so the next run re-authorizes with the new scopes:
+
+   ```bash
+   rm ~/.config/url2qr/box_tokens.json
+   ```
+
+5. Run the Box workflow again — the browser will open for re-authorization.
