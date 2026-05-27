@@ -16,7 +16,7 @@ The Box script does the same for local Box Drive folders.
 
 ## Features
 
-- Generate a Bitly URL from an input URL when `BITLY_ACCESS_TOKEN` is set
+- Generate a Bitly URL via OAuth 2.0 or a static access token (optional)
 - Export QR codes as PNG images
 - Choose which URL to embed in the QR code
   - `original` (default): the original URL
@@ -27,7 +27,9 @@ The Box script does the same for local Box Drive folders.
 ## Requirements
 
 - Python 3.10+
-- Bitly Access Token (optional; enables Bitly URLs)
+- Bitly credentials (optional; enables Bitly URLs):
+  - Static access token — `BITLY_ACCESS_TOKEN`, or
+  - OAuth 2.0 credentials — `BITLY_CLIENT_ID` and `BITLY_CLIENT_SECRET`
 - Dropbox Access Token (for Dropbox path workflow)
 - Box OAuth 2.0 credentials — Client ID and Client Secret (for Box path workflow)
 
@@ -35,11 +37,24 @@ The Box script does the same for local Box Drive folders.
 
 The scripts create a virtual environment in the system temp directory and install runtime dependencies from `requirements.txt` automatically on first run. On macOS, the path is `/private/tmp/$UID/url2qr`.
 
-Set your Bitly token as an environment variable if you want Bitly URLs:
+For Bitly URL shortening, choose one of the two options below.
+
+### Option A — Static access token (simple)
 
 ```bash
 export BITLY_ACCESS_TOKEN="your_bitly_token"
 ```
+
+### Option B — OAuth 2.0 (no manual token generation needed)
+
+```bash
+export BITLY_CLIENT_ID="your_bitly_client_id"
+export BITLY_CLIENT_SECRET="your_bitly_client_secret"
+```
+
+On first run a browser window opens for Bitly login. The access token is cached in
+`~/.config/url2qr/bitly_tokens.json` and reused automatically on subsequent runs.
+Bitly access tokens do not expire, so no refresh is needed.
 
 If you use the Dropbox workflow, set your Dropbox token too:
 
@@ -57,7 +72,7 @@ export BOX_CLIENT_SECRET="your_box_client_secret"
 On first run the script opens a browser for Box login. Tokens are cached in
 `~/.config/url2qr/box_tokens.json` and refreshed automatically afterwards.
 
-## How To Get A Bitly Access Token
+## How To Get A Bitly Static Access Token
 
 1. Sign in to your Bitly account at [bitly.com](https://bitly.com/).
 2. Open your account settings page.
@@ -69,6 +84,42 @@ export BITLY_ACCESS_TOKEN="your_bitly_token"
 ```
 
 Note: Keep this token private. Treat it like a password.
+
+## How To Set Up Bitly OAuth 2.0
+
+1. Sign in to [Bitly](https://bitly.com/) and go to **Account Settings → Integrations**.
+2. Register a new OAuth application.
+3. Under **Redirect URIs**, add `http://localhost:8080/callback`
+   (use a different port if you pass `--redirect-port`).
+4. Copy the **Client ID** and **Client Secret**.
+5. Set them in your shell:
+
+```bash
+export BITLY_CLIENT_ID="your_bitly_client_id"
+export BITLY_CLIENT_SECRET="your_bitly_client_secret"
+```
+
+On the first run a browser window opens for Bitly login. After you authorize the app,
+the token is saved to `~/.config/url2qr/bitly_tokens.json` (mode 600) and reused
+automatically. Bitly tokens do not expire, so no refresh is needed.
+
+### Headless or browser-less environments
+
+Pass `--no-browser` to skip the local HTTP server. The script prints the authorization
+URL and prompts you to paste the callback URL from your browser (which can be on a
+different machine):
+
+```bash
+python3 url2qr.py "https://example.com" --no-browser
+# or
+python3 dropbox2qr.py "/MyFolder/file.txt" --no-browser
+# or
+python3 box2qr.py "/MyFolder/file.txt" --no-browser
+```
+
+After you open the printed URL in any browser and authorize, your browser will be
+redirected to `http://localhost:8080/callback?code=...`. Copy that full URL from the
+address bar and paste it at the prompt.
 
 ## How To Get A Dropbox Access Token
 
@@ -118,7 +169,7 @@ Specify an output file:
 python3 url2qr.py "https://example.com" -o myqr.png
 ```
 
-Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
+Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
 python3 url2qr.py "https://example.com" --qr-target short
@@ -142,7 +193,7 @@ Or pass a Dropbox API path directly:
 python3 dropbox2qr.py "/MyFolder/file.txt"
 ```
 
-Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
+Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
 python3 dropbox2qr.py "/MyFolder/file.txt" --qr-target short -o dropbox_qr.png
@@ -160,7 +211,7 @@ Or pass a Box API path directly:
 python3 box2qr.py "/MyFolder/file.txt"
 ```
 
-Embed the Bitly URL in the QR code when `BITLY_ACCESS_TOKEN` is set:
+Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
 python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
@@ -168,9 +219,9 @@ python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
 
 ## Notes
 
-- Network access is required to call the Bitly API when `BITLY_ACCESS_TOKEN` is set.
+- Network access is required to call the Bitly API when Bitly is configured.
 - Network access is also required on first run to install Python dependencies.
-- If `BITLY_ACCESS_TOKEN` is not set, the command prints a warning, skips Bitly URL generation, and still creates the QR code.
+- If Bitly is not configured, the command prints a warning, skips Bitly URL generation, and still creates the QR code.
 - Set `URL2QR_NO_AUTO_VENV=1` to skip automatic virtual environment setup.
 
 ### Dropbox scope error troubleshooting
@@ -197,3 +248,13 @@ If you see a permission or scope error when running the Box workflow:
    ```
 
 5. Run the Box workflow again — the browser will open for re-authorization.
+
+### Bitly token cache troubleshooting
+
+If you need to re-authorize Bitly (for example, after revoking the app), delete the cached token:
+
+```bash
+rm ~/.config/url2qr/bitly_tokens.json
+```
+
+The next run will open a browser (or prompt for a callback URL with `--no-browser`) to re-authorize.

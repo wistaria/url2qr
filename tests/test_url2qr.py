@@ -90,6 +90,8 @@ def test_main_uses_short_when_requested(monkeypatch):
 
 def test_main_warns_and_generates_qr_without_bitly_token(monkeypatch, capsys):
     monkeypatch.delenv("BITLY_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("BITLY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("BITLY_CLIENT_SECRET", raising=False)
 
     captured = {}
     monkeypatch.setattr(
@@ -106,7 +108,7 @@ def test_main_warns_and_generates_qr_without_bitly_token(monkeypatch, capsys):
     assert captured["output"] == "qrcode.png"
     assert "Bitly URL:" not in output.out
     assert "Warning:" in output.err
-    assert "BITLY_ACCESS_TOKEN is not set" in output.err
+    assert "Bitly not configured" in output.err
 
 
 def test_main_fails_if_bitly_shortening_fails(monkeypatch, capsys):
@@ -122,6 +124,25 @@ def test_main_fails_if_bitly_shortening_fails(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "Failed to shorten URL with Bitly" in stderr
+
+
+def test_main_no_bitly_skips_shortening(monkeypatch, capsys):
+    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "token123")
+
+    captured = {}
+    monkeypatch.setattr(
+        url2qr,
+        "make_qr",
+        lambda text, output: captured.update({"text": text, "output": output}),
+    )
+
+    exit_code = url2qr.main(["https://example.com", "--no-bitly"])
+    output = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured["text"] == "https://example.com"
+    assert "Bitly URL:" not in output.out
+    assert "Warning:" not in output.err
 
 
 def test_main_without_args_shows_help(capsys):

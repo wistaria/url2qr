@@ -13,12 +13,11 @@ import sys
 import requests
 
 from cli_common import (
-    optional_env,
     parse_args_or_show_help,
     require_env,
     select_qr_text,
 )
-from url2qr import make_qr, shorten_with_bitly
+from url2qr import acquire_bitly_token, make_qr, shorten_with_bitly
 
 
 def normalize_dropbox_path(path: str) -> str:
@@ -161,6 +160,25 @@ def main(argv: list[str] | None = None) -> int:
         default="public",
         help="Which URL to encode in the QR code; short means Bitly when available",
     )
+    parser.add_argument(
+        "--redirect-port",
+        type=int,
+        default=8080,
+        help="Local port for Bitly OAuth callback (default: 8080)",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help=(
+            "Print the Bitly authorization URL and prompt for the callback URL "
+            "instead of opening a browser (useful for headless environments)"
+        ),
+    )
+    parser.add_argument(
+        "--no-bitly",
+        action="store_true",
+        help="Skip Bitly URL shortening even if credentials are configured",
+    )
 
     args = parse_args_or_show_help(parser, argv)
     if args is None:
@@ -183,10 +201,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     bitly_url = None
-    bitly_token = optional_env(
-        "BITLY_ACCESS_TOKEN",
-        "BITLY_ACCESS_TOKEN is not set; skipping Bitly URL generation.",
-    )
+    bitly_token = None
+    if not args.no_bitly:
+        try:
+            bitly_token = acquire_bitly_token(args.redirect_port, args.no_browser)
+        except (TimeoutError, ValueError, requests.RequestException) as exc:
+            print(f"Error: Bitly authentication failed: {exc}", file=sys.stderr)
+            return 1
     if bitly_token:
         try:
             bitly_url = shorten_with_bitly(public_url, bitly_token)
