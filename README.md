@@ -181,18 +181,18 @@ URL and prompts you to paste the callback URL from your browser (which can be on
 different machine):
 
 ```bash
-python3 url2qr.py "https://example.com" --no-browser
+./url2qr "https://example.com" --no-browser
 # or
-python3 dropbox2qr.py "/MyFolder/file.txt" --no-browser
+./dropbox2qr "/MyFolder/file.txt" --no-browser
 # or
-python3 box2qr.py "/MyFolder/file.txt" --no-browser
+./box2qr "/MyFolder/file.txt" --no-browser
 ```
 
 After you open the printed URL in any browser and authorize, your browser will be
 redirected to `http://localhost:8080/callback?code=...`. Copy that full URL from the
 address bar and paste it at the prompt.
 
-Note: For `box2qr.py`, `--no-browser` applies only to the Bitly OAuth step. Box OAuth
+Note: For `box2qr`, `--no-browser` applies only to the Bitly OAuth step. Box OAuth
 always uses the local HTTP server; use SSH port forwarding for headless Box authentication.
 
 ## Usage
@@ -200,25 +200,25 @@ always uses the local HTTP server; use SSH port forwarding for headless Box auth
 Basic usage:
 
 ```bash
-python3 url2qr.py "https://example.com/some/very/long/url"
+./url2qr "https://example.com/some/very/long/url"
 ```
 
 Specify an output file:
 
 ```bash
-python3 url2qr.py "https://example.com" -o myqr.png
+./url2qr "https://example.com" -o myqr.png
 ```
 
 Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
-python3 url2qr.py "https://example.com" --qr-target short
+./url2qr "https://example.com" --qr-target short
 ```
 
 Skip Bitly even if credentials are configured:
 
 ```bash
-python3 url2qr.py "https://example.com" --no-bitly
+./url2qr "https://example.com" --no-bitly
 ```
 
 The command prints:
@@ -230,37 +230,37 @@ The command prints:
 Dropbox workflow:
 
 ```bash
-python3 dropbox2qr.py "/Users/you/Library/CloudStorage/Dropbox/MyFolder/file.txt"
+./dropbox2qr "/Users/you/Library/CloudStorage/Dropbox/MyFolder/file.txt"
 ```
 
 Or pass a Dropbox API path directly:
 
 ```bash
-python3 dropbox2qr.py "/MyFolder/file.txt"
+./dropbox2qr "/MyFolder/file.txt"
 ```
 
 Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
-python3 dropbox2qr.py "/MyFolder/file.txt" --qr-target short -o dropbox_qr.png
+./dropbox2qr "/MyFolder/file.txt" --qr-target short -o dropbox_qr.png
 ```
 
 Box workflow:
 
 ```bash
-python3 box2qr.py "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt"
+./box2qr "/Users/you/Library/CloudStorage/Box/MyFolder/file.txt"
 ```
 
 Or pass a Box API path directly:
 
 ```bash
-python3 box2qr.py "/MyFolder/file.txt"
+./box2qr "/MyFolder/file.txt"
 ```
 
 Embed the Bitly URL in the QR code when Bitly is configured:
 
 ```bash
-python3 box2qr.py "/MyFolder/file.txt" --qr-target short -o box_qr.png
+./box2qr "/MyFolder/file.txt" --qr-target short -o box_qr.png
 ```
 
 ## Notes

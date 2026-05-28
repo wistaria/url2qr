@@ -1,4 +1,6 @@
-import url2qr
+import qrcode
+
+import url2qr_cli as url2qr
 
 
 class FakeResponse:
@@ -40,7 +42,7 @@ def test_make_qr_calls_save(monkeypatch, tmp_path):
         called["text"] = text
         return FakeImage()
 
-    monkeypatch.setattr(url2qr.qrcode, "make", fake_make)
+    monkeypatch.setattr(qrcode, "make", fake_make)
 
     url2qr.make_qr("https://bit.ly/abc123", str(output))
 

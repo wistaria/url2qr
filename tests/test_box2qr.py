@@ -1,4 +1,4 @@
-import box2qr
+import box2qr_cli as box2qr
 import pytest
 
 

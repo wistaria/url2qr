@@ -10,6 +10,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 import sys
@@ -17,35 +18,56 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
 from cli_common import (
+    acquire_bitly_token,
+    make_qr,
     parse_args_or_show_help,
-    require_env,
     select_qr_text,
+    shorten_with_bitly,
 )
-from url2qr import acquire_bitly_token, make_qr, shorten_with_bitly
+
 
 # ---------------------------------------------------------------------------
-# OAuth 2.0 + PKCE
+# Dropbox OAuth 2.0 + PKCE
 # ---------------------------------------------------------------------------
 
-_TOKEN_CACHE = Path.home() / ".config" / "url2qr" / "box_tokens.json"
-_AUTH_URL = "https://account.box.com/api/oauth2/authorize"
-_TOKEN_URL = "https://api.box.com/oauth2/token"
+_DROPBOX_TOKEN_CACHE = Path.home() / ".config" / "url2qr" / "dropbox_tokens.json"
+_DROPBOX_AUTH_URL = "https://www.dropbox.com/oauth2/authorize"
+_DROPBOX_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 _DEFAULT_REDIRECT_PORT = 8080
 _AUTH_TIMEOUT = 120
 
 
-def get_box_access_token(
+def acquire_dropbox_token(
+    redirect_port: int = _DEFAULT_REDIRECT_PORT,
+    no_browser: bool = False,
+) -> str | None:
+    static = os.environ.get("DROPBOX_ACCESS_TOKEN")
+    if static:
+        return static
+    client_id = os.environ.get("DROPBOX_CLIENT_ID")
+    client_secret = os.environ.get("DROPBOX_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        print(
+            "Error: Dropbox not configured. "
+            "Set DROPBOX_ACCESS_TOKEN or both DROPBOX_CLIENT_ID and DROPBOX_CLIENT_SECRET.",
+            file=sys.stderr,
+        )
+        return None
+    return get_dropbox_access_token(client_id, client_secret, redirect_port, no_browser)
+
+
+def get_dropbox_access_token(
     client_id: str,
     client_secret: str,
     redirect_port: int = _DEFAULT_REDIRECT_PORT,
+    no_browser: bool = False,
 ) -> str:
-    cached = _load_tokens()
+    cached = _load_dropbox_tokens()
     if cached:
         expires_at = cached.get("expires_at", 0)
         if isinstance(expires_at, (int, float)) and expires_at > time.time():
@@ -53,40 +75,43 @@ def get_box_access_token(
         refresh_token = cached.get("refresh_token")
         if refresh_token:
             try:
-                tokens = _refresh_tokens(client_id, client_secret, str(refresh_token))
+                tokens = _refresh_dropbox_tokens(
+                    client_id, client_secret, str(refresh_token)
+                )
                 return str(tokens["access_token"])
             except requests.RequestException:
                 pass
-
-    tokens = _authorize(client_id, client_secret, redirect_port)
+    tokens = _authorize_dropbox(client_id, client_secret, redirect_port, no_browser)
     return str(tokens["access_token"])
 
 
-def _load_tokens() -> dict | None:
-    if not _TOKEN_CACHE.exists():
+def _load_dropbox_tokens() -> dict | None:
+    if not _DROPBOX_TOKEN_CACHE.exists():
         return None
     try:
-        data = json.loads(_TOKEN_CACHE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
+        data = json.loads(_DROPBOX_TOKEN_CACHE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and "access_token" in data else None
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _save_tokens(tokens: dict) -> None:
-    _TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    _TOKEN_CACHE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
-    _TOKEN_CACHE.chmod(0o600)
+def _save_dropbox_tokens(tokens: dict) -> None:
+    _DROPBOX_TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    _DROPBOX_TOKEN_CACHE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
+    _DROPBOX_TOKEN_CACHE.chmod(0o600)
 
 
 def _store_with_expiry(tokens: dict) -> dict:
-    tokens["expires_at"] = time.time() + tokens.get("expires_in", 3600) - 60
-    _save_tokens(tokens)
+    tokens["expires_at"] = time.time() + tokens.get("expires_in", 14400) - 60
+    _save_dropbox_tokens(tokens)
     return tokens
 
 
-def _refresh_tokens(client_id: str, client_secret: str, refresh_token: str) -> dict:
+def _refresh_dropbox_tokens(
+    client_id: str, client_secret: str, refresh_token: str
+) -> dict:
     res = requests.post(
-        _TOKEN_URL,
+        _DROPBOX_TOKEN_URL,
         data={
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
@@ -96,7 +121,11 @@ def _refresh_tokens(client_id: str, client_secret: str, refresh_token: str) -> d
         timeout=15,
     )
     res.raise_for_status()
-    return _store_with_expiry(res.json())
+    tokens = res.json()
+    # Dropbox does not return a new refresh_token on refresh — preserve the original.
+    if "refresh_token" not in tokens:
+        tokens["refresh_token"] = refresh_token
+    return _store_with_expiry(tokens)
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -109,13 +138,17 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _authorize(client_id: str, client_secret: str, redirect_port: int) -> dict:
+def _authorize_dropbox(
+    client_id: str,
+    client_secret: str,
+    redirect_port: int,
+    no_browser: bool,
+) -> dict:
     verifier, challenge = _pkce_pair()
-    redirect_uri = f"http://localhost:{redirect_port}/callback"
     state = secrets.token_urlsafe(16)
-
+    redirect_uri = f"http://localhost:{redirect_port}/callback"
     auth_url = (
-        _AUTH_URL
+        _DROPBOX_AUTH_URL
         + "?"
         + urlencode(
             {
@@ -125,10 +158,54 @@ def _authorize(client_id: str, client_secret: str, redirect_port: int) -> dict:
                 "state": state,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
+                "token_access_type": "offline",
             }
         )
     )
 
+    if no_browser:
+        code = _get_code_no_browser(auth_url, state)
+    else:
+        code = _get_code_via_browser(auth_url, state, redirect_port)
+
+    res = requests.post(
+        _DROPBOX_TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code_verifier": verifier,
+        },
+        timeout=15,
+    )
+    res.raise_for_status()
+    return _store_with_expiry(res.json())
+
+
+def _get_code_no_browser(auth_url: str, expected_state: str) -> str:
+    print("Open the following URL in a browser to authorize Dropbox:")
+    print(f"  {auth_url}")
+    print()
+    print("After authorizing, your browser will redirect to localhost and show")
+    print(
+        "a connection error. Copy the full URL from the address bar and paste it here."
+    )
+    print()
+    callback_url = input("Callback URL: ").strip()
+    parsed = urlparse(callback_url)
+    qs = parse_qs(parsed.query)
+    if "code" not in qs:
+        raise ValueError("No authorization code found in the callback URL.")
+    if qs.get("state", [""])[0] != expected_state:
+        raise ValueError("OAuth state mismatch — possible CSRF. Authorization aborted.")
+    return qs["code"][0]
+
+
+def _get_code_via_browser(
+    auth_url: str, expected_state: str, redirect_port: int
+) -> str:
     result: dict[str, str] = {}
 
     class _Handler(BaseHTTPRequestHandler):
@@ -153,7 +230,7 @@ def _authorize(client_id: str, client_secret: str, redirect_port: int) -> dict:
     server = HTTPServer(("localhost", redirect_port), _Handler)
     server.timeout = 1
 
-    print("Opening browser for Box authorization...")
+    print("Opening browser for Dropbox authorization...")
     print(f"If the browser does not open, visit:\n  {auth_url}")
     webbrowser.open(auth_url)
 
@@ -164,48 +241,34 @@ def _authorize(client_id: str, client_secret: str, redirect_port: int) -> dict:
 
     if "code" not in result:
         raise TimeoutError(
-            f"Box authorization timed out after {_AUTH_TIMEOUT}s. "
+            f"Dropbox authorization timed out after {_AUTH_TIMEOUT}s. "
             "Please re-run the command to try again."
         )
-    if result.get("state") != state:
+    if result.get("state") != expected_state:
         raise ValueError("OAuth state mismatch — possible CSRF. Authorization aborted.")
-
-    res = requests.post(
-        _TOKEN_URL,
-        data={
-            "grant_type": "authorization_code",
-            "code": result["code"],
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-            "code_verifier": verifier,
-        },
-        timeout=15,
-    )
-    res.raise_for_status()
-    return _store_with_expiry(res.json())
+    return result["code"]
 
 
 # ---------------------------------------------------------------------------
-# Box API
+# Dropbox API
 # ---------------------------------------------------------------------------
 
 
-def normalize_box_path(path: str) -> str:
+def normalize_dropbox_path(path: str) -> str:
     stripped = path.strip()
     if not stripped:
-        raise ValueError("Box path must not be empty")
+        raise ValueError("Dropbox path must not be empty")
 
     unix_like = stripped.replace("\\", "/")
 
-    # Convert local Box Drive paths into Box API paths.
+    # Convert local Dropbox paths into Dropbox API paths.
     # Examples:
-    # - /Users/me/Library/CloudStorage/Box/MyFolder/file.txt
-    # - /Users/me/Library/CloudStorage/Box (Personal)/MyFolder/file.txt
-    # - /Users/me/Box/MyFolder/file.txt
+    # - /Users/me/Library/CloudStorage/Dropbox/MyFolder/file.txt
+    # - /Users/me/Library/CloudStorage/Dropbox (Personal)/MyFolder/file.txt
+    # - /Users/me/Dropbox/MyFolder/file.txt
     local_patterns = [
-        r"/(?:Library/CloudStorage/)?Box(?:\s\([^/]+\))?(/.*)?$",
-        r"/(?:Library/CloudStorage/)?Box\sSync(?:\s\([^/]+\))?(/.*)?$",
+        r"/CloudStorage/Dropbox(?:\s\([^/]+\))?(/.*)?$",
+        r"/Dropbox(?:\s\([^/]+\))?(/.*)?$",
     ]
     for pattern in local_patterns:
         match = re.search(pattern, unix_like)
@@ -213,32 +276,27 @@ def normalize_box_path(path: str) -> str:
             suffix = match.group(1) or "/"
             return suffix if suffix.startswith("/") else f"/{suffix}"
 
+    # Dropbox API paths always start with '/'.
     if stripped.startswith("/"):
         return stripped
 
     return f"/{stripped}"
 
 
-def _box_api_request(
-    method: str,
-    endpoint: str,
-    token: str,
-    *,
-    params: dict[str, Any] | None = None,
-    json: dict[str, Any] | None = None,
-) -> requests.Response:
-    res = requests.request(
-        method,
-        f"https://api.box.com/2.0/{endpoint}",
-        headers={"Authorization": f"Bearer {token}"},
-        params=params,
-        json=json,
+def _post_dropbox_api(endpoint: str, token: str, payload: dict) -> requests.Response:
+    res = requests.post(
+        f"https://api.dropboxapi.com/2/{endpoint}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
         timeout=15,
     )
     return res
 
 
-def _box_error_summary(response: requests.Response) -> str:
+def _dropbox_error_summary(response: requests.Response) -> str:
     try:
         payload = response.json()
     except ValueError:
@@ -255,138 +313,67 @@ def _box_error_summary(response: requests.Response) -> str:
             preview = preview[:200] + "..."
         return f"status={response.status_code}, body={preview}"
 
-    context_info = payload.get("context_info") or {}
-    errors = context_info.get("errors") if isinstance(context_info, dict) else None
-    if errors:
-        return f"status={response.status_code}, errors={errors}"
-
-    code = payload.get("code")
-    message = payload.get("message")
-    if code or message:
-        return f"status={response.status_code}, code={code}, message={message}"
+    summary = payload.get("error_summary")
+    if summary:
+        return f"status={response.status_code}, error_summary={summary}"
     return f"status={response.status_code}, body={payload}"
 
 
-def _extract_box_missing_scopes(*messages: str) -> list[str]:
+def _extract_missing_scopes(*messages: str) -> list[str]:
     found: set[str] = set()
     for message in messages:
         for scope in re.findall(r"required scope '([^']+)'", message):
             found.add(scope)
-        for scope in re.findall(r"scope '([^']+)'", message):
-            if "missing" in message.lower() or "required" in message.lower():
-                found.add(scope)
     return sorted(found)
 
 
-def _has_box_permission_error(*messages: str) -> bool:
-    markers = (
-        "missing_scope",
-        "insufficient_scope",
-        "insufficient_permissions",
-        "access denied",
-        "not permitted",
-    )
-    return any(
-        any(marker in message.lower() for marker in markers) for message in messages
-    )
+def _has_missing_scope_error(*messages: str) -> bool:
+    return any("missing_scope/" in message for message in messages)
 
 
-def _list_folder_items(folder_id: str, token: str) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    offset = 0
-    limit = 1000
-    while True:
-        res = _box_api_request(
-            "GET",
-            f"folders/{folder_id}/items",
-            token,
-            params={"limit": limit, "offset": offset, "fields": "id,name,type"},
-        )
-        res.raise_for_status()
-        payload = res.json()
-        items.extend(payload.get("entries", []))
-        total_count = payload.get("total_count", len(items))
-        offset = payload.get("offset", offset) + payload.get("limit", limit)
-        if offset >= total_count:
-            break
-    return items
-
-
-def resolve_box_folder_id(box_path: str, token: str) -> str:
-    path = normalize_box_path(box_path)
-    if path in {"/", ""}:
-        return "0"
-
-    segments = [segment for segment in path.strip("/").split("/") if segment]
-    folder_id = "0"
-    current_path = ""
-    for segment in segments:
-        current_path = f"{current_path}/{segment}"
-        items = _list_folder_items(folder_id, token)
-        match = next(
-            (
-                item
-                for item in items
-                if item.get("type") == "folder" and item.get("name") == segment
-            ),
-            None,
-        )
-        if match is None:
-            raise ValueError(f"Folder not found in Box path: {current_path}")
-        folder_id = str(match["id"])
-    return folder_id
-
-
-def get_or_create_shared_url(box_path: str, token: str) -> str:
-    folder_id = resolve_box_folder_id(box_path, token)
-
-    update_res = _box_api_request(
-        "PUT",
-        f"folders/{folder_id}",
+def get_or_create_shared_url(dropbox_path: str, token: str) -> str:
+    create_res = _post_dropbox_api(
+        "sharing/create_shared_link_with_settings",
         token,
-        json={"shared_link": {"access": "open"}},
+        {"path": dropbox_path},
     )
-    if update_res.ok:
-        payload = update_res.json()
-        shared_link = payload.get("shared_link") or {}
-        url = shared_link.get("url")
-        if url:
-            return url
 
-    get_res = _box_api_request(
-        "GET",
-        f"folders/{folder_id}",
+    if create_res.ok:
+        return create_res.json()["url"]
+
+    # Try listing existing links even if create fails; some environments disallow
+    # creation but still allow reading existing shared links.
+    list_res = _post_dropbox_api(
+        "sharing/list_shared_links",
         token,
-        params={"fields": "shared_link"},
+        {"path": dropbox_path, "direct_only": True},
     )
-    if get_res.ok:
-        payload = get_res.json()
-        shared_link = payload.get("shared_link") or {}
-        url = shared_link.get("url")
-        if url:
-            return url
+    if list_res.ok:
+        links = list_res.json().get("links", [])
+        if links:
+            return links[0]["url"]
 
-    update_msg = _box_error_summary(update_res)
-    get_msg = _box_error_summary(get_res)
-    missing_scopes = _extract_box_missing_scopes(update_msg, get_msg)
+    create_msg = _dropbox_error_summary(create_res)
+    list_msg = _dropbox_error_summary(list_res)
+    missing_scopes = _extract_missing_scopes(create_msg, list_msg)
     scope_hint = ""
     if missing_scopes:
         joined = ", ".join(missing_scopes)
         scope_hint = (
-            " Required Box app scopes are missing: "
-            f"{joined}. Update app permissions in the Box Developer Console, "
-            "then generate a new access token."
+            " Required Dropbox app scopes are missing: "
+            f"{joined}. Update app permissions in Dropbox App Console, then "
+            "generate a new access token or delete the cached tokens and re-authorize."
         )
-    elif _has_box_permission_error(update_msg, get_msg):
+    elif _has_missing_scope_error(create_msg, list_msg):
         scope_hint = (
-            " Box token is missing required permissions. "
-            "Enable access to files/folders and shared links in the Box Developer Console, "
-            "then generate a new access token."
+            " Dropbox token is missing required app scopes. "
+            "Enable at least sharing.read and sharing.write in Dropbox App Console, "
+            "then generate a new access token or delete the cached tokens and re-authorize."
         )
     raise ValueError(
-        "Box API did not return a shared URL "
-        f"(folders/{folder_id} PUT: {update_msg}; folders/{folder_id} GET: {get_msg})."
-        f"{scope_hint}"
+        "Dropbox API did not return a shared URL "
+        f"(create_shared_link_with_settings: {create_msg}; "
+        f"list_shared_links: {list_msg}).{scope_hint}"
     )
 
 
@@ -398,10 +385,11 @@ def get_or_create_shared_url(box_path: str, token: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Create a Box shared URL, then generate a QR code and optional Bitly URL."
+            "Create a Dropbox shared URL, then generate a QR code and optional "
+            "Bitly URL."
         )
     )
-    parser.add_argument("path", help="Box path (API path or local Box Drive path)")
+    parser.add_argument("path", help="Dropbox path (API path or local Dropbox path)")
     parser.add_argument(
         "-o", "--output", default="qrcode.png", help="QR code output file"
     )
@@ -421,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         "--no-browser",
         action="store_true",
         help=(
-            "Print the Bitly authorization URL and prompt for the callback URL "
+            "Print the authorization URL and prompt for the callback URL "
             "instead of opening a browser (useful for headless environments)"
         ),
     )
@@ -435,27 +423,24 @@ def main(argv: list[str] | None = None) -> int:
     if args is None:
         return 2
 
-    client_id = require_env("BOX_CLIENT_ID")
-    client_secret = require_env("BOX_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        return 1
-
     try:
-        box_token = get_box_access_token(client_id, client_secret, args.redirect_port)
+        dropbox_token = acquire_dropbox_token(args.redirect_port, args.no_browser)
     except (TimeoutError, ValueError, requests.RequestException) as exc:
-        print(f"Error: Box authentication failed: {exc}", file=sys.stderr)
+        print(f"Error: Dropbox authentication failed: {exc}", file=sys.stderr)
+        return 1
+    if not dropbox_token:
         return 1
 
     try:
-        box_path = normalize_box_path(args.path)
+        dropbox_path = normalize_dropbox_path(args.path)
     except ValueError as exc:
-        print(f"Error: Invalid Box path: {exc}", file=sys.stderr)
+        print(f"Error: Invalid Dropbox path: {exc}", file=sys.stderr)
         return 1
 
     try:
-        public_url = get_or_create_shared_url(box_path, box_token)
+        public_url = get_or_create_shared_url(dropbox_path, dropbox_token)
     except (requests.RequestException, KeyError, ValueError) as exc:
-        print(f"Error: Failed to get Box shared URL: {exc}", file=sys.stderr)
+        print(f"Error: Failed to get Dropbox shared URL: {exc}", file=sys.stderr)
         return 1
 
     bitly_url = None
@@ -480,7 +465,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: Failed to save QR code image: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Box path:     {box_path}")
+    print(f"Dropbox path: {dropbox_path}")
     print(f"Public URL:   {public_url}")
     if bitly_url:
         print(f"Bitly URL:    {bitly_url}")

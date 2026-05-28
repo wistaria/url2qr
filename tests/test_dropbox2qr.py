@@ -1,4 +1,4 @@
-import dropbox2qr
+import dropbox2qr_cli as dropbox2qr
 import pytest
 
 
