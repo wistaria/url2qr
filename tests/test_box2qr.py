@@ -26,6 +26,15 @@ def test_normalize_box_path_from_box_personal_path():
     assert box2qr.normalize_box_path(path) == "/MyFolder/file.txt"
 
 
+def test_normalize_box_path_strips_trailing_slash_from_local_folder():
+    path = "/Users/test/Library/CloudStorage/Box/MyFolder/Sub/"
+    assert box2qr.normalize_box_path(path) == "/MyFolder/Sub"
+
+
+def test_normalize_box_path_strips_trailing_slash_from_api_path():
+    assert box2qr.normalize_box_path("/MyFolder/Sub/") == "/MyFolder/Sub"
+
+
 def test_normalize_box_path_from_relative_input():
     assert box2qr.normalize_box_path("MyFolder/file.txt") == "/MyFolder/file.txt"
 
@@ -150,11 +159,11 @@ def test_get_or_create_shared_url_includes_permission_hint(monkeypatch):
 
 
 def test_main_success_public_qr(monkeypatch):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
-    monkeypatch.setenv("BOX_CLIENT_ID", "client-id")
-    monkeypatch.setenv("BOX_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(box2qr, "acquire_box_token", lambda port: "box-token")
     monkeypatch.setattr(
-        box2qr, "get_box_access_token", lambda cid, cs, port: "box-token"
+        box2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: "bitly-token",
     )
     monkeypatch.setattr(
         box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
@@ -175,15 +184,15 @@ def test_main_success_public_qr(monkeypatch):
     assert captured["output"] == "box.png"
 
 
-def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, capsys):
-    monkeypatch.delenv("BITLY_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("BITLY_CLIENT_ID", raising=False)
-    monkeypatch.delenv("BITLY_CLIENT_SECRET", raising=False)
-    monkeypatch.setenv("BOX_CLIENT_ID", "client-id")
-    monkeypatch.setenv("BOX_CLIENT_SECRET", "client-secret")
-    monkeypatch.setattr(
-        box2qr, "get_box_access_token", lambda cid, cs, port: "box-token"
-    )
+def test_main_generates_public_qr_without_prompting_for_bitly(monkeypatch, capsys):
+    seen = {}
+
+    def no_bitly_token(port, no_browser, configure=False):
+        seen["configure"] = configure
+        return None
+
+    monkeypatch.setattr(box2qr, "acquire_box_token", lambda port: "box-token")
+    monkeypatch.setattr(box2qr, "acquire_bitly_token", no_bitly_token)
     monkeypatch.setattr(
         box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
     )
@@ -201,16 +210,39 @@ def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, cap
     assert exit_code == 0
     assert captured["text"] == "https://box.com/s/abc"
     assert "Bitly URL:" not in output.out
-    assert "Warning:" in output.err
-    assert "Bitly not configured" in output.err
+    assert "Warning:" not in output.err
+    assert seen["configure"] is False
+
+
+def test_main_configures_bitly_when_requested(monkeypatch):
+    seen = {}
+
+    def configured_bitly_token(port, no_browser, configure=False):
+        seen["configure"] = configure
+        return "bitly-token"
+
+    monkeypatch.setattr(box2qr, "acquire_box_token", lambda port: "box-token")
+    monkeypatch.setattr(box2qr, "acquire_bitly_token", configured_bitly_token)
+    monkeypatch.setattr(
+        box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
+    )
+    monkeypatch.setattr(box2qr, "shorten_with_bitly", lambda u, t: "https://bit.ly/abc")
+    monkeypatch.setattr(box2qr, "make_qr", lambda text, output: None)
+
+    exit_code = box2qr.main(["/MyFolder/file.txt", "--bitly"])
+
+    assert exit_code == 0
+    assert seen["configure"] is True
 
 
 def test_main_no_bitly_skips_shortening(monkeypatch, capsys):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
-    monkeypatch.setenv("BOX_CLIENT_ID", "client-id")
-    monkeypatch.setenv("BOX_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(box2qr, "acquire_box_token", lambda port: "box-token")
     monkeypatch.setattr(
-        box2qr, "get_box_access_token", lambda cid, cs, port: "box-token"
+        box2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: (_ for _ in ()).throw(
+            AssertionError("unexpected")
+        ),
     )
     monkeypatch.setattr(
         box2qr, "get_or_create_shared_url", lambda p, t: "https://box.com/s/abc"
@@ -232,12 +264,13 @@ def test_main_no_bitly_skips_shortening(monkeypatch, capsys):
     assert "Warning:" not in output.err
 
 
-def test_main_fails_without_box_credentials(monkeypatch, capsys):
-    monkeypatch.delenv("BOX_CLIENT_ID", raising=False)
-    monkeypatch.delenv("BOX_CLIENT_SECRET", raising=False)
+def test_main_fails_when_box_authentication_is_unavailable(monkeypatch, capsys):
+    def fail_auth(port):
+        raise ValueError("Box OAuth credentials are not configured")
 
+    monkeypatch.setattr(box2qr, "acquire_box_token", fail_auth)
     exit_code = box2qr.main(["/MyFolder/file.txt"])
     stderr = capsys.readouterr().err
 
     assert exit_code == 1
-    assert "BOX_CLIENT_ID is not set" in stderr
+    assert "Box authentication failed" in stderr

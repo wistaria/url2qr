@@ -52,7 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-bitly",
         action="store_true",
-        help="Skip Bitly URL shortening even if credentials are configured",
+        help="Skip Bitly URL shortening even if a Bitly token is cached",
+    )
+    parser.add_argument(
+        "--bitly",
+        action="store_true",
+        help="Configure Bitly credentials if no Bitly token is cached",
     )
 
     args = parse_args_or_show_help(parser, argv)
@@ -63,7 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     token = None
     if not args.no_bitly:
         try:
-            token = acquire_bitly_token(args.redirect_port, args.no_browser)
+            token = acquire_bitly_token(
+                args.redirect_port, args.no_browser, configure=args.bitly
+            )
         except (TimeoutError, ValueError, requests.RequestException) as exc:
             print(f"Error: Bitly authentication failed: {exc}", file=sys.stderr)
             return 1

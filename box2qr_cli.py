@@ -16,7 +16,6 @@ import sys
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -24,9 +23,11 @@ import requests
 
 from cli_common import (
     acquire_bitly_token,
+    config_path,
     make_qr,
     parse_args_or_show_help,
-    require_env,
+    prompt_oauth_credentials,
+    save_cached_fields,
     select_qr_text,
     shorten_with_bitly,
 )
@@ -35,11 +36,27 @@ from cli_common import (
 # OAuth 2.0 + PKCE
 # ---------------------------------------------------------------------------
 
-_TOKEN_CACHE = Path.home() / ".config" / "url2qr" / "box_tokens.json"
+_CREDENTIALS_CACHE = config_path("box_credentials.json")
+_TOKEN_CACHE = config_path("box_tokens.json")
 _AUTH_URL = "https://account.box.com/api/oauth2/authorize"
 _TOKEN_URL = "https://api.box.com/oauth2/token"
 _DEFAULT_REDIRECT_PORT = 8080
 _AUTH_TIMEOUT = 120
+
+
+def acquire_box_token(redirect_port: int = _DEFAULT_REDIRECT_PORT) -> str:
+    cached = _load_tokens()
+    if cached:
+        expires_at = cached.get("expires_at", 0)
+        if isinstance(expires_at, (int, float)) and expires_at > time.time():
+            return str(cached["access_token"])
+
+    credentials = prompt_oauth_credentials("Box", _CREDENTIALS_CACHE)
+    return get_box_access_token(
+        str(credentials["client_id"]),
+        str(credentials["client_secret"]),
+        redirect_port,
+    )
 
 
 def get_box_access_token(
@@ -75,9 +92,7 @@ def _load_tokens() -> dict | None:
 
 
 def _save_tokens(tokens: dict) -> None:
-    _TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    _TOKEN_CACHE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
-    _TOKEN_CACHE.chmod(0o600)
+    save_cached_fields(_TOKEN_CACHE, tokens)
 
 
 def _store_with_expiry(tokens: dict) -> dict:
@@ -213,12 +228,19 @@ def normalize_box_path(path: str) -> str:
         match = re.search(pattern, unix_like)
         if match:
             suffix = match.group(1) or "/"
-            return suffix if suffix.startswith("/") else f"/{suffix}"
+            return _normalize_box_api_path(suffix)
 
-    if stripped.startswith("/"):
-        return stripped
+    if unix_like.startswith("/"):
+        return _normalize_box_api_path(unix_like)
 
-    return f"/{stripped}"
+    return _normalize_box_api_path(unix_like)
+
+
+def _normalize_box_api_path(path: str) -> str:
+    api_path = path if path.startswith("/") else f"/{path}"
+    if api_path != "/":
+        api_path = api_path.rstrip("/")
+    return api_path
 
 
 def _box_api_request(
@@ -430,20 +452,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-bitly",
         action="store_true",
-        help="Skip Bitly URL shortening even if credentials are configured",
+        help="Skip Bitly URL shortening even if a Bitly token is cached",
+    )
+    parser.add_argument(
+        "--bitly",
+        action="store_true",
+        help="Configure Bitly credentials if no Bitly token is cached",
     )
 
     args = parse_args_or_show_help(parser, argv)
     if args is None:
         return 2
 
-    client_id = require_env("BOX_CLIENT_ID")
-    client_secret = require_env("BOX_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        return 1
-
     try:
-        box_token = get_box_access_token(client_id, client_secret, args.redirect_port)
+        box_token = acquire_box_token(args.redirect_port)
     except (TimeoutError, ValueError, requests.RequestException) as exc:
         print(f"Error: Box authentication failed: {exc}", file=sys.stderr)
         return 1
@@ -464,7 +486,9 @@ def main(argv: list[str] | None = None) -> int:
     bitly_token = None
     if not args.no_bitly:
         try:
-            bitly_token = acquire_bitly_token(args.redirect_port, args.no_browser)
+            bitly_token = acquire_bitly_token(
+                args.redirect_port, args.no_browser, configure=args.bitly
+            )
         except (TimeoutError, ValueError, requests.RequestException) as exc:
             print(f"Error: Bitly authentication failed: {exc}", file=sys.stderr)
             return 1

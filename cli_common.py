@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -16,8 +17,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 
-BOOTSTRAP_SKIP_ENV = "URL2QR_NO_AUTO_VENV"
-_BITLY_TOKEN_CACHE = Path.home() / ".config" / "url2qr" / "bitly_tokens.json"
+_CONFIG_DIR = Path.home() / ".config" / "url2qr"
+_BITLY_CREDENTIALS_CACHE = _CONFIG_DIR / "bitly_credentials.json"
+_BITLY_TOKEN_CACHE = _CONFIG_DIR / "bitly_tokens.json"
 _BITLY_AUTH_URL = "https://bitly.com/oauth/authorize"
 _BITLY_TOKEN_URL = "https://api-ssl.bitly.com/oauth/access_token"
 _DEFAULT_REDIRECT_PORT = 8080
@@ -26,9 +28,6 @@ _AUTH_TIMEOUT = 120
 
 def ensure_project_venv() -> None:
     """Create/use the temp virtual environment before third-party imports."""
-    if os.getenv(BOOTSTRAP_SKIP_ENV):
-        return
-
     project_root = Path(__file__).resolve().parent
     venv_dir = _default_venv_dir()
     venv_python = _venv_python(venv_dir)
@@ -62,22 +61,6 @@ def ensure_project_venv() -> None:
     os.execv(str(venv_python), [str(venv_python), *sys.argv])
 
 
-def require_env(name: str) -> str | None:
-    value = os.getenv(name)
-    if not value:
-        print(f"Error: {name} is not set", file=sys.stderr)
-        return None
-    return value
-
-
-def optional_env(name: str, missing_warning: str) -> str | None:
-    value = os.getenv(name)
-    if not value:
-        print(f"Warning: {missing_warning}", file=sys.stderr)
-        return None
-    return value
-
-
 def parse_args_or_show_help(
     parser: argparse.ArgumentParser, argv: list[str] | None
 ) -> argparse.Namespace | None:
@@ -92,23 +75,89 @@ def select_qr_text(qr_target: str, bitly_url: str | None, public_url: str) -> st
     return bitly_url if qr_target == "short" and bitly_url else public_url
 
 
+def config_path(filename: str) -> Path:
+    return _CONFIG_DIR / filename
+
+
+def load_cached_fields(path: Path, required_fields: tuple[str, ...]) -> dict | None:
+    data = _read_json_file(path)
+    if not isinstance(data, dict):
+        return None
+    return data if all(data.get(field) for field in required_fields) else None
+
+
+def save_cached_fields(path: Path, data: dict) -> None:
+    _write_secure_json(path, data)
+
+
+def prompt_required_text(prompt: str, *, secret: bool = False) -> str:
+    while True:
+        value = _prompt_text(prompt, secret=secret).strip()
+        if value:
+            return value
+        print("Value must not be empty.", file=sys.stderr)
+
+
+def prompt_optional_secret(prompt: str) -> str | None:
+    value = _prompt_text(prompt, secret=True).strip()
+    return value or None
+
+
+def prompt_oauth_credentials(
+    service: str,
+    cache_path: Path,
+    *,
+    client_id_label: str = "Client ID",
+    client_secret_label: str = "Client Secret",
+) -> dict:
+    cached = load_cached_fields(cache_path, ("client_id", "client_secret"))
+    if cached:
+        return cached
+
+    print(f"{service} OAuth credentials are not configured.")
+    print(f"They will be saved to {cache_path} with file mode 600.")
+    client_id = prompt_required_text(f"{service} {client_id_label}: ")
+    client_secret = prompt_required_text(
+        f"{service} {client_secret_label}: ", secret=True
+    )
+    credentials = {"client_id": client_id, "client_secret": client_secret}
+    save_cached_fields(cache_path, credentials)
+    return credentials
+
+
 def acquire_bitly_token(
     redirect_port: int = _DEFAULT_REDIRECT_PORT,
     no_browser: bool = False,
+    configure: bool = False,
 ) -> str | None:
-    static = os.environ.get("BITLY_ACCESS_TOKEN")
-    if static:
-        return static
-    client_id = os.environ.get("BITLY_CLIENT_ID")
-    client_secret = os.environ.get("BITLY_CLIENT_SECRET")
-    if not client_id or not client_secret:
+    cached = _load_bitly_tokens()
+    if cached:
+        return str(cached["access_token"])
+
+    if not configure:
+        return None
+
+    token = prompt_optional_secret(
+        "Bitly access token (leave empty for OAuth, type 'skip' to skip): "
+    )
+    if token and token.lower() == "skip":
         print(
-            "Warning: Bitly not configured; skipping URL shortening. "
-            "Set BITLY_ACCESS_TOKEN or both BITLY_CLIENT_ID and BITLY_CLIENT_SECRET.",
+            "Warning: Bitly not configured; skipping URL shortening.",
             file=sys.stderr,
         )
         return None
-    return get_bitly_access_token(client_id, client_secret, redirect_port, no_browser)
+
+    if token:
+        _save_bitly_tokens({"access_token": token, "source": "manual"})
+        return token
+
+    credentials = prompt_oauth_credentials("Bitly", _BITLY_CREDENTIALS_CACHE)
+    return get_bitly_access_token(
+        str(credentials["client_id"]),
+        str(credentials["client_secret"]),
+        redirect_port,
+        no_browser,
+    )
 
 
 def get_bitly_access_token(
@@ -151,19 +200,12 @@ def make_qr(text: str, output: str) -> None:
 
 
 def _load_bitly_tokens() -> dict | None:
-    if not _BITLY_TOKEN_CACHE.exists():
-        return None
-    try:
-        data = json.loads(_BITLY_TOKEN_CACHE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) and "access_token" in data else None
-    except (json.JSONDecodeError, OSError):
-        return None
+    data = _read_json_file(_BITLY_TOKEN_CACHE)
+    return data if isinstance(data, dict) and "access_token" in data else None
 
 
 def _save_bitly_tokens(tokens: dict) -> None:
-    _BITLY_TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    _BITLY_TOKEN_CACHE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
-    _BITLY_TOKEN_CACHE.chmod(0o600)
+    _write_secure_json(_BITLY_TOKEN_CACHE, tokens)
 
 
 def _authorize_bitly(
@@ -195,17 +237,37 @@ def _authorize_bitly(
 
     res = requests.post(
         _BITLY_TOKEN_URL,
+        headers={"Accept": "application/json"},
         data={
             "client_id": client_id,
             "client_secret": client_secret,
             "code": code,
             "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
         },
         timeout=15,
     )
     res.raise_for_status()
-    tokens = res.json()
+    tokens = _parse_bitly_token_response(res)
     _save_bitly_tokens(tokens)
+    return tokens
+
+
+def _parse_bitly_token_response(response: object) -> dict:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        tokens = payload
+    else:
+        body = getattr(response, "text", "")
+        parsed = parse_qs(body)
+        tokens = {key: values[0] for key, values in parsed.items() if values}
+
+    if not tokens.get("access_token"):
+        raise ValueError("Bitly token response did not include an access_token.")
     return tokens
 
 
@@ -272,6 +334,35 @@ def _get_code_via_browser(
     if result.get("state") != expected_state:
         raise ValueError("OAuth state mismatch - possible CSRF. Authorization aborted.")
     return result["code"]
+
+
+def _prompt_text(prompt: str, *, secret: bool) -> str:
+    if secret:
+        return getpass.getpass(prompt)
+    return input(prompt)
+
+
+def _read_json_file(path: Path) -> object | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _write_secure_json(path: Path, data: dict) -> None:
+    _ensure_config_dir()
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def _ensure_config_dir() -> None:
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        _CONFIG_DIR.chmod(0o700)
+    except OSError:
+        pass
 
 
 def _venv_python(venv_dir: Path) -> Path:

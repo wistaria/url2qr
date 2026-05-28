@@ -26,6 +26,17 @@ def test_normalize_dropbox_path_from_cloudstorage_personal_path():
     assert dropbox2qr.normalize_dropbox_path(path) == "/MyFolder/file.txt"
 
 
+def test_normalize_dropbox_path_strips_trailing_slash_from_local_folder():
+    path = "/Users/test/Dropbox/Public/PhotoTodo/"
+    assert dropbox2qr.normalize_dropbox_path(path) == "/Public/PhotoTodo"
+
+
+def test_normalize_dropbox_path_strips_trailing_slash_from_api_path():
+    assert (
+        dropbox2qr.normalize_dropbox_path("/Public/PhotoTodo/") == "/Public/PhotoTodo"
+    )
+
+
 def test_normalize_dropbox_path_from_relative_input():
     assert (
         dropbox2qr.normalize_dropbox_path("MyFolder/file.txt") == "/MyFolder/file.txt"
@@ -160,8 +171,16 @@ def test_get_or_create_shared_url_includes_generic_missing_scope_hint(monkeypatc
 
 
 def test_main_success_default_public_qr(monkeypatch):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
-    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "dropbox-token")
+    monkeypatch.setattr(
+        dropbox2qr,
+        "acquire_dropbox_token",
+        lambda port, no_browser, configure=False: "dropbox-token",
+    )
+    monkeypatch.setattr(
+        dropbox2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: "bitly-token",
+    )
     monkeypatch.setattr(
         dropbox2qr, "get_or_create_shared_url", lambda p, t: "https://dropbox.com/s/abc"
     )
@@ -183,10 +202,16 @@ def test_main_success_default_public_qr(monkeypatch):
     assert captured["output"] == "dropbox.png"
 
 
-def test_main_uses_oauth_when_no_static_token(monkeypatch):
-    monkeypatch.delenv("DROPBOX_ACCESS_TOKEN", raising=False)
-    monkeypatch.setenv("DROPBOX_CLIENT_ID", "client-id")
-    monkeypatch.setenv("DROPBOX_CLIENT_SECRET", "client-secret")
+def test_main_uses_cached_oauth_credentials(monkeypatch):
+    monkeypatch.setattr(dropbox2qr, "_load_dropbox_tokens", lambda: None)
+    monkeypatch.setattr(
+        dropbox2qr,
+        "load_cached_fields",
+        lambda path, fields: {
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+        },
+    )
     monkeypatch.setattr(
         dropbox2qr,
         "get_dropbox_access_token",
@@ -209,13 +234,19 @@ def test_main_uses_oauth_when_no_static_token(monkeypatch):
     assert captured["text"] == "https://dropbox.com/s/abc"
 
 
-def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, capsys):
-    monkeypatch.delenv("BITLY_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("BITLY_CLIENT_ID", raising=False)
-    monkeypatch.delenv("BITLY_CLIENT_SECRET", raising=False)
-    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "dropbox-token")
-    monkeypatch.delenv("DROPBOX_CLIENT_ID", raising=False)
-    monkeypatch.delenv("DROPBOX_CLIENT_SECRET", raising=False)
+def test_main_generates_public_qr_without_prompting_for_bitly(monkeypatch, capsys):
+    seen = {}
+
+    def no_bitly_token(port, no_browser, configure=False):
+        seen["configure"] = configure
+        return None
+
+    monkeypatch.setattr(
+        dropbox2qr,
+        "acquire_dropbox_token",
+        lambda port, no_browser, configure=False: "dropbox-token",
+    )
+    monkeypatch.setattr(dropbox2qr, "acquire_bitly_token", no_bitly_token)
     monkeypatch.setattr(
         dropbox2qr, "get_or_create_shared_url", lambda p, t: "https://dropbox.com/s/abc"
     )
@@ -233,13 +264,48 @@ def test_main_warns_and_generates_public_qr_without_bitly_token(monkeypatch, cap
     assert exit_code == 0
     assert captured["text"] == "https://dropbox.com/s/abc"
     assert "Bitly URL:" not in output.out
-    assert "Warning:" in output.err
-    assert "Bitly not configured" in output.err
+    assert "Warning:" not in output.err
+    assert seen["configure"] is False
+
+
+def test_main_configures_bitly_when_requested(monkeypatch):
+    seen = {}
+
+    def configured_bitly_token(port, no_browser, configure=False):
+        seen["configure"] = configure
+        return "bitly-token"
+
+    monkeypatch.setattr(
+        dropbox2qr, "acquire_dropbox_token", lambda port, no_browser: "dropbox-token"
+    )
+    monkeypatch.setattr(dropbox2qr, "acquire_bitly_token", configured_bitly_token)
+    monkeypatch.setattr(
+        dropbox2qr, "get_or_create_shared_url", lambda p, t: "https://dropbox.com/s/abc"
+    )
+    monkeypatch.setattr(
+        dropbox2qr, "shorten_with_bitly", lambda u, t: "https://bit.ly/abc"
+    )
+    monkeypatch.setattr(dropbox2qr, "make_qr", lambda text, output: None)
+
+    exit_code = dropbox2qr.main(["/MyFolder/file.txt", "--bitly"])
+
+    assert exit_code == 0
+    assert seen["configure"] is True
 
 
 def test_main_no_bitly_skips_shortening(monkeypatch, capsys):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "bitly-token")
-    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "dropbox-token")
+    monkeypatch.setattr(
+        dropbox2qr,
+        "acquire_dropbox_token",
+        lambda port, no_browser, configure=False: "dropbox-token",
+    )
+    monkeypatch.setattr(
+        dropbox2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: (_ for _ in ()).throw(
+            AssertionError("unexpected")
+        ),
+    )
     monkeypatch.setattr(
         dropbox2qr, "get_or_create_shared_url", lambda p, t: "https://dropbox.com/s/abc"
     )
@@ -260,13 +326,13 @@ def test_main_no_bitly_skips_shortening(monkeypatch, capsys):
     assert "Warning:" not in output.err
 
 
-def test_main_fails_without_dropbox_credentials(monkeypatch, capsys):
-    monkeypatch.delenv("DROPBOX_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("DROPBOX_CLIENT_ID", raising=False)
-    monkeypatch.delenv("DROPBOX_CLIENT_SECRET", raising=False)
+def test_main_fails_when_dropbox_authentication_is_unavailable(monkeypatch, capsys):
+    def fail_auth(port, no_browser):
+        raise ValueError("Dropbox OAuth credentials are not configured")
 
+    monkeypatch.setattr(dropbox2qr, "acquire_dropbox_token", fail_auth)
     exit_code = dropbox2qr.main(["/MyFolder/file.txt"])
     stderr = capsys.readouterr().err
 
     assert exit_code == 1
-    assert "Dropbox not configured" in stderr
+    assert "Dropbox authentication failed" in stderr

@@ -10,22 +10,25 @@ import argparse
 import base64
 import hashlib
 import json
-import os
 import re
 import secrets
 import sys
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
 from cli_common import (
     acquire_bitly_token,
+    config_path,
+    load_cached_fields,
     make_qr,
     parse_args_or_show_help,
+    prompt_oauth_credentials,
+    prompt_optional_secret,
+    save_cached_fields,
     select_qr_text,
     shorten_with_bitly,
 )
@@ -35,7 +38,8 @@ from cli_common import (
 # Dropbox OAuth 2.0 + PKCE
 # ---------------------------------------------------------------------------
 
-_DROPBOX_TOKEN_CACHE = Path.home() / ".config" / "url2qr" / "dropbox_tokens.json"
+_DROPBOX_CREDENTIALS_CACHE = config_path("dropbox_credentials.json")
+_DROPBOX_TOKEN_CACHE = config_path("dropbox_tokens.json")
 _DROPBOX_AUTH_URL = "https://www.dropbox.com/oauth2/authorize"
 _DROPBOX_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 _DEFAULT_REDIRECT_PORT = 8080
@@ -46,19 +50,35 @@ def acquire_dropbox_token(
     redirect_port: int = _DEFAULT_REDIRECT_PORT,
     no_browser: bool = False,
 ) -> str | None:
-    static = os.environ.get("DROPBOX_ACCESS_TOKEN")
-    if static:
-        return static
-    client_id = os.environ.get("DROPBOX_CLIENT_ID")
-    client_secret = os.environ.get("DROPBOX_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        print(
-            "Error: Dropbox not configured. "
-            "Set DROPBOX_ACCESS_TOKEN or both DROPBOX_CLIENT_ID and DROPBOX_CLIENT_SECRET.",
-            file=sys.stderr,
+    cached = _load_dropbox_tokens()
+    if cached:
+        expires_at = cached.get("expires_at")
+        if not expires_at or (
+            isinstance(expires_at, (int, float)) and expires_at > time.time()
+        ):
+            return str(cached["access_token"])
+
+    credentials = load_cached_fields(
+        _DROPBOX_CREDENTIALS_CACHE, ("client_id", "client_secret")
+    )
+    if not credentials:
+        token = prompt_optional_secret("Dropbox access token (leave empty for OAuth): ")
+        if token:
+            _save_dropbox_tokens({"access_token": token, "source": "manual"})
+            return token
+        credentials = prompt_oauth_credentials(
+            "Dropbox",
+            _DROPBOX_CREDENTIALS_CACHE,
+            client_id_label="App key",
+            client_secret_label="App secret",
         )
-        return None
-    return get_dropbox_access_token(client_id, client_secret, redirect_port, no_browser)
+
+    return get_dropbox_access_token(
+        str(credentials["client_id"]),
+        str(credentials["client_secret"]),
+        redirect_port,
+        no_browser,
+    )
 
 
 def get_dropbox_access_token(
@@ -96,9 +116,7 @@ def _load_dropbox_tokens() -> dict | None:
 
 
 def _save_dropbox_tokens(tokens: dict) -> None:
-    _DROPBOX_TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    _DROPBOX_TOKEN_CACHE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
-    _DROPBOX_TOKEN_CACHE.chmod(0o600)
+    save_cached_fields(_DROPBOX_TOKEN_CACHE, tokens)
 
 
 def _store_with_expiry(tokens: dict) -> dict:
@@ -274,13 +292,20 @@ def normalize_dropbox_path(path: str) -> str:
         match = re.search(pattern, unix_like)
         if match:
             suffix = match.group(1) or "/"
-            return suffix if suffix.startswith("/") else f"/{suffix}"
+            return _normalize_dropbox_api_path(suffix)
 
     # Dropbox API paths always start with '/'.
-    if stripped.startswith("/"):
-        return stripped
+    if unix_like.startswith("/"):
+        return _normalize_dropbox_api_path(unix_like)
 
-    return f"/{stripped}"
+    return _normalize_dropbox_api_path(unix_like)
+
+
+def _normalize_dropbox_api_path(path: str) -> str:
+    api_path = path if path.startswith("/") else f"/{path}"
+    if api_path != "/":
+        api_path = api_path.rstrip("/")
+    return api_path
 
 
 def _post_dropbox_api(endpoint: str, token: str, payload: dict) -> requests.Response:
@@ -416,7 +441,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-bitly",
         action="store_true",
-        help="Skip Bitly URL shortening even if credentials are configured",
+        help="Skip Bitly URL shortening even if a Bitly token is cached",
+    )
+    parser.add_argument(
+        "--bitly",
+        action="store_true",
+        help="Configure Bitly credentials if no Bitly token is cached",
     )
 
     args = parse_args_or_show_help(parser, argv)
@@ -447,7 +477,9 @@ def main(argv: list[str] | None = None) -> int:
     bitly_token = None
     if not args.no_bitly:
         try:
-            bitly_token = acquire_bitly_token(args.redirect_port, args.no_browser)
+            bitly_token = acquire_bitly_token(
+                args.redirect_port, args.no_browser, configure=args.bitly
+            )
         except (TimeoutError, ValueError, requests.RequestException) as exc:
             print(f"Error: Bitly authentication failed: {exc}", file=sys.stderr)
             return 1

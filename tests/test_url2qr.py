@@ -1,12 +1,14 @@
+import cli_common
 import qrcode
 
 import url2qr_cli as url2qr
 
 
 class FakeResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload, status_code=200, text=""):
         self._payload = payload
         self.status_code = status_code
+        self.text = text
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -50,8 +52,24 @@ def test_make_qr_calls_save(monkeypatch, tmp_path):
     assert called["path"] == str(output)
 
 
+def test_parse_bitly_token_response_accepts_urlencoded_body():
+    response = FakeResponse(
+        None,
+        text="access_token=token123&login=bitly_user",
+    )
+
+    result = cli_common._parse_bitly_token_response(response)
+
+    assert result["access_token"] == "token123"
+    assert result["login"] == "bitly_user"
+
+
 def test_main_success_default_original_target(monkeypatch, capsys):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "token123")
+    monkeypatch.setattr(
+        url2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: "token123",
+    )
     monkeypatch.setattr(url2qr, "shorten_with_bitly", lambda u, t: "https://bit.ly/xyz")
 
     captured = {}
@@ -73,7 +91,11 @@ def test_main_success_default_original_target(monkeypatch, capsys):
 
 
 def test_main_uses_short_when_requested(monkeypatch):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "token123")
+    monkeypatch.setattr(
+        url2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: "token123",
+    )
     monkeypatch.setattr(url2qr, "shorten_with_bitly", lambda u, t: "https://bit.ly/xyz")
 
     captured = {}
@@ -90,10 +112,14 @@ def test_main_uses_short_when_requested(monkeypatch):
     assert captured["output"] == "qrcode.png"
 
 
-def test_main_warns_and_generates_qr_without_bitly_token(monkeypatch, capsys):
-    monkeypatch.delenv("BITLY_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("BITLY_CLIENT_ID", raising=False)
-    monkeypatch.delenv("BITLY_CLIENT_SECRET", raising=False)
+def test_main_does_not_prompt_for_bitly_by_default(monkeypatch, capsys):
+    seen = {}
+
+    def no_bitly_token(port, no_browser, configure=False):
+        seen["configure"] = configure
+        return None
+
+    monkeypatch.setattr(url2qr, "acquire_bitly_token", no_bitly_token)
 
     captured = {}
     monkeypatch.setattr(
@@ -109,12 +135,33 @@ def test_main_warns_and_generates_qr_without_bitly_token(monkeypatch, capsys):
     assert captured["text"] == "https://example.com"
     assert captured["output"] == "qrcode.png"
     assert "Bitly URL:" not in output.out
-    assert "Warning:" in output.err
-    assert "Bitly not configured" in output.err
+    assert "Warning:" not in output.err
+    assert seen["configure"] is False
+
+
+def test_main_configures_bitly_when_requested(monkeypatch):
+    seen = {}
+
+    def configured_bitly_token(port, no_browser, configure=False):
+        seen["configure"] = configure
+        return "token123"
+
+    monkeypatch.setattr(url2qr, "acquire_bitly_token", configured_bitly_token)
+    monkeypatch.setattr(url2qr, "shorten_with_bitly", lambda u, t: "https://bit.ly/xyz")
+    monkeypatch.setattr(url2qr, "make_qr", lambda text, output: None)
+
+    exit_code = url2qr.main(["https://example.com", "--bitly"])
+
+    assert exit_code == 0
+    assert seen["configure"] is True
 
 
 def test_main_fails_if_bitly_shortening_fails(monkeypatch, capsys):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "token123")
+    monkeypatch.setattr(
+        url2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: "token123",
+    )
 
     def fail_shortening(url, token):
         raise url2qr.requests.RequestException("boom")
@@ -129,7 +176,13 @@ def test_main_fails_if_bitly_shortening_fails(monkeypatch, capsys):
 
 
 def test_main_no_bitly_skips_shortening(monkeypatch, capsys):
-    monkeypatch.setenv("BITLY_ACCESS_TOKEN", "token123")
+    monkeypatch.setattr(
+        url2qr,
+        "acquire_bitly_token",
+        lambda port, no_browser, configure=False: (_ for _ in ()).throw(
+            AssertionError("unexpected")
+        ),
+    )
 
     captured = {}
     monkeypatch.setattr(
